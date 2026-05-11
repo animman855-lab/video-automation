@@ -16,7 +16,6 @@ NOTION_HEADERS = {
     "Notion-Version": "2022-06-28",
 }
 
-# Mapping avatar → profil Upload-Post (sensible à la casse)
 AVATAR_PROFILES = {
     "oliviaa":        "oliviaa",
     "thefluentbuild": "thefluentbuild",
@@ -28,15 +27,21 @@ def get_current_slot():
     tz = pytz.timezone("America/Toronto")
     now = datetime.now(tz)
     hour = now.hour
-    # Tolérance de 30 minutes
-    if hour == 8 or (hour == 7 and now.minute >= 30):
-        return "08:00"
-    elif hour == 16 or (hour == 15 and now.minute >= 30):
-        return "16:00"
-    elif hour == 0 or (hour == 23 and now.minute >= 30):
-        return "00:00"
-    else:
-        return None
+    minute = now.minute
+    total_minutes = hour * 60 + minute
+
+    # Tolérance de 59 minutes autour de chaque slot
+    slots = {
+        "08:00": 8 * 60,
+        "16:00": 16 * 60,
+        "00:00": 0,
+    }
+
+    for slot_name, slot_minutes in slots.items():
+        if abs(total_minutes - slot_minutes) <= 59:
+            return slot_name
+
+    return None
 
 # ── Étape 2 : Lire Notion ───────────────────────────────
 def get_videos_to_publish(slot):
@@ -47,9 +52,9 @@ def get_videos_to_publish(slot):
     payload = {
         "filter": {
             "and": [
-                {"property": "Statut",           "select": {"equals": "À publier"}},
-                {"property": "Date Publication",  "date":   {"equals": today}},
-                {"property": "Slot",              "select": {"equals": slot}},
+                {"property": "Statut",          "select": {"equals": "À publier"}},
+                {"property": "Date Publication", "date":   {"equals": today}},
+                {"property": "Slot",             "select": {"equals": slot}},
             ]
         }
     }
@@ -61,7 +66,7 @@ def get_videos_to_publish(slot):
 def generate_metadata(script):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-haiku-4-5-20251001",
         max_tokens=300,
         messages=[
             {
@@ -91,7 +96,6 @@ def generate_metadata(script):
 
 # ── Étape 4 : Télécharger la vidéo depuis Google Drive ──
 def download_video(drive_url):
-    # Convertir l'URL Drive en lien de téléchargement direct
     if "drive.google.com/file/d/" in drive_url:
         file_id = drive_url.split("/file/d/")[1].split("/")[0]
     elif "id=" in drive_url:
@@ -103,7 +107,6 @@ def download_video(drive_url):
     session = requests.Session()
     response = session.get(download_url, stream=True)
 
-    # Gérer la confirmation Google pour les gros fichiers
     for key, value in response.cookies.items():
         if key.startswith("download_warning"):
             download_url = f"{download_url}&confirm={value}"
@@ -123,7 +126,6 @@ def publish_video(video_path, titre, description, avatar, plateformes):
     if not profile:
         raise ValueError(f"Avatar inconnu : {avatar}")
 
-    # Mapping plateformes Notion → clés Upload-Post
     platform_map = {
         "YouTube":   "youtube",
         "Facebook":  "facebook",
@@ -161,10 +163,13 @@ def mark_as_published(page_id):
 
 # ── Main ─────────────────────────────────────────────────
 def main():
+    tz = pytz.timezone("America/Toronto")
+    now = datetime.now(tz)
+    print(f"Heure actuelle (Montréal) : {now.strftime('%H:%M')}")
+
     slot = get_current_slot()
     if not slot:
-        tz = pytz.timezone("America/Toronto")
-        print(f"Aucun slot actif à {datetime.now(tz).strftime('%H:%M')} — rien à publier.")
+        print(f"Aucun slot actif — rien à publier.")
         return
 
     print(f"Slot actif : {slot}")
@@ -175,7 +180,6 @@ def main():
         props = video["properties"]
         page_id = video["id"]
 
-        # Extraire les données Notion
         titre_notion = props["Titre"]["title"][0]["text"]["content"] if props["Titre"]["title"] else "Sans titre"
         script       = props["Script"]["rich_text"][0]["text"]["content"] if props["Script"]["rich_text"] else ""
         avatar       = props["Avatar"]["select"]["name"] if props["Avatar"]["select"] else ""
@@ -185,33 +189,28 @@ def main():
         print(f"\nTraitement : {titre_notion} | Avatar : {avatar} | Plateformes : {plateformes}")
 
         if not lien_video:
-            print(f"  ⚠️  Pas de lien vidéo — ignoré.")
+            print("  ⚠️  Pas de lien vidéo — ignoré.")
             continue
         if not script:
-            print(f"  ⚠️  Pas de script — ignoré.")
+            print("  ⚠️  Pas de script — ignoré.")
             continue
 
-        # Générer titre + description
         print("  → Génération titre/description via Claude...")
         titre, description = generate_metadata(script)
         print(f"  → Titre : {titre}")
         print(f"  → Description : {description}")
 
-        # Télécharger la vidéo
         print("  → Téléchargement vidéo depuis Google Drive...")
         video_path = download_video(lien_video)
         print(f"  → Vidéo téléchargée : {video_path}")
 
-        # Publier
         print("  → Publication via Upload-Post...")
         result = publish_video(video_path, titre, description, avatar, plateformes)
         print(f"  → Résultat : {result}")
 
-        # Mettre à jour Notion
         mark_as_published(page_id)
-        print(f"  ✅ Notion mis à jour → Publié")
+        print("  ✅ Notion mis à jour → Publié")
 
-        # Nettoyer le fichier temporaire
         os.remove(video_path)
 
     print("\nTerminé.")
