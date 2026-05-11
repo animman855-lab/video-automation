@@ -2,9 +2,7 @@ name: Video Auto-Publisher
 
 on:
   schedule:
-    - cron: '0 12 * * *'   # 08:00 EDT (UTC-4)
-    - cron: '0 20 * * *'   # 16:00 EDT (UTC-4)
-    - cron: '0 4  * * *'   # 00:00 EDT (UTC-4)
+    - cron: '*/30 * * * *'
   workflow_dispatch:        # Permet de lancer manuellement pour tester
 
 jobs:
