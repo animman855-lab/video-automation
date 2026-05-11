@@ -28,11 +28,12 @@ def get_current_slot():
     tz = pytz.timezone("America/Toronto")
     now = datetime.now(tz)
     hour = now.hour
-    if hour == 8:
+    # Tolérance de 30 minutes
+    if hour == 8 or (hour == 7 and now.minute >= 30):
         return "08:00"
-    elif hour == 16:
+    elif hour == 16 or (hour == 15 and now.minute >= 30):
         return "16:00"
-    elif hour == 0:
+    elif hour == 0 or (hour == 23 and now.minute >= 30):
         return "00:00"
     else:
         return None
