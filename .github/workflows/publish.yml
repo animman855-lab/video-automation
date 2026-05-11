@@ -1,0 +1,32 @@
+name: Video Auto-Publisher
+
+on:
+  schedule:
+    - cron: '0 12 * * *'   # 08:00 EDT (UTC-4)
+    - cron: '0 20 * * *'   # 16:00 EDT (UTC-4)
+    - cron: '0 4  * * *'   # 00:00 EDT (UTC-4)
+  workflow_dispatch:        # Permet de lancer manuellement pour tester
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer les dépendances
+        run: pip install requests anthropic pytz
+
+      - name: Lancer le script de publication
+        env:
+          NOTION_TOKEN:        ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID:  ${{ secrets.NOTION_DATABASE_ID }}
+          UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python publish.py
