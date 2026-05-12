@@ -3,11 +3,16 @@ name: Video Auto-Publisher
 on:
   schedule:
     - cron: '*/15 * * * *'
-  workflow_dispatch:        # Permet de lancer manuellement pour tester
+  workflow_dispatch:
+
+concurrency:
+  group: video-publisher
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repo
@@ -18,8 +23,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Installer les dépendances
-        run: pip install requests anthropic pytz
+      - name: Installer les dependances
+        run: pip install -r requirements.txt
+
+      - name: Afficher heure serveur
+        run: date
 
       - name: Lancer le script de publication
         env:
