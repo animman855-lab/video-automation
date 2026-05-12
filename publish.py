@@ -44,8 +44,8 @@ def slot_is_due(slot_name):
 def get_videos_to_publish():
     tz = pytz.timezone("America/Toronto")
     today = datetime.now(tz).strftime("%Y-%m-%d")
-    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
-    payload = {
+url = f"https://api.notion.com/v1/blocks/{NOTION_DATABASE_ID}/children"
+payload = {
         "filter": {
             "and": [
                 {"property": "Statut", "select": {"equals": "A publier"}},
@@ -55,8 +55,8 @@ def get_videos_to_publish():
     }
     print("URL:", url)
     print("Payload:", payload)
-    response = requests.post(url, headers=NOTION_HEADERS, json=payload)
-    print("STATUS:", response.status_code)
+response = requests.get(url, headers=NOTION_HEADERS)
+print("STATUS:", response.status_code)
     print("RESPONSE:", response.text)
     response.raise_for_status()
     return response.json().get("results", [])
