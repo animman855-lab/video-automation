@@ -1,5 +1,6 @@
 import os
 import requests
+import re
 from datetime import datetime
 import pytz
 
@@ -11,6 +12,7 @@ NOTION_HEADERS = {
     "Content-Type": "application/json",
     "Notion-Version": "2022-06-28",
 }
+
 
 def get_videos_to_publish():
     tz = pytz.timezone("America/Toronto")
@@ -28,7 +30,7 @@ def get_videos_to_publish():
                     }
                 },
                 {
-                    "property": "Date Publication",
+                    "property": "Date",
                     "date": {
                         "equals": today
                     }
@@ -43,13 +45,32 @@ def get_videos_to_publish():
         json=payload
     )
 
-    print("STATUS:", response.status_code)
-    print("RESPONSE:", response.text)
+    print("STATUT :", response.status_code)
+    print("RÉPONSE :", response.text)
 
     response.raise_for_status()
 
     return response.json().get("results", [])
 
+
 videos = get_videos_to_publish()
 
-print("VIDEOS TROUVÉES :", len(videos))
+print("VIDÉOS TROUVÉES :", len(videos))
+
+if len(videos) > 0:
+
+    video = videos[0]
+
+    video_url = video["properties"]["Lien Video"]["url"]
+
+    print("LIEN VIDÉO :", video_url)
+
+    match = re.search(r"/d/([a-zA-Z0-9_-]+)", video_url)
+
+    if match:
+        file_id = match.group(1)
+        print("FILE ID :", file_id)
+    else:
+        print("AUCUN FILE ID TROUVÉ")
+else:
+    print("AUCUNE VIDÉO À PUBLIER")
