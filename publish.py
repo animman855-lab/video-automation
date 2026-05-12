@@ -39,7 +39,7 @@ def slot_is_due(slot_name):
     diff = current_minutes - slot_minutes
     if slot_minutes == 0:
         diff = current_minutes if current_minutes < 180 else -1
-    return 0 <= diff <= 180
+    return 0 <= diff <= 480
 
 
 def get_videos_to_publish():
