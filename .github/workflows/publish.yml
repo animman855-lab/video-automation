@@ -2,7 +2,7 @@ name: Video Auto-Publisher
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:        # Permet de lancer manuellement pour tester
 
 jobs:
