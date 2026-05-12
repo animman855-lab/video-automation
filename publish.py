@@ -60,22 +60,42 @@ def get_videos_to_publish():
     return response.json().get("results", [])
 
 
-def generate_metadata(script):
+def generate_metadata(script, avatar):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    avatar_context = {
+        "oliviaa": "an elderly English teacher woman who teaches English vocabulary and pronunciation to beginners and ESL learners in a simple, clear and warm way.",
+        "thefluentbuild": "a mature woman who teaches English fluency, speaking confidence and everyday conversation skills.",
+        "teacherryan": "a business English teacher man who teaches professional English, business vocabulary and communication skills.",
+    }
+
+    context = avatar_context.get(avatar.lower(), "an English teacher")
+
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=300,
+        max_tokens=1000,
         messages=[
             {
                 "role": "user",
                 "content": (
-                    "Tu es un expert en marketing de contenu video pour les reseaux sociaux.\n"
-                    "A partir du script ci-dessous, genere :\n"
-                    "1. Un TITRE accrocheur (maximum 30 caracteres STRICT)\n"
-                    "2. Une DESCRIPTION (maximum 20 caracteres STRICT, pas de hashtags)\n\n"
-                    "Reponds UNIQUEMENT dans ce format exact :\n"
-                    "TITRE: [titre ici]\n"
-                    "DESCRIPTION: [description ici]\n\n"
+                    f"You are a social media expert creating content for {context}\n\n"
+                    "Based on the video script below, generate:\n\n"
+                    "1. TITLE: An engaging, curiosity-driven title with 1-2 relevant emojis. "
+                    "Max 90 characters. Examples: '99% of People Don't Know These Egg Names 🥚🍳', "
+                    "'Most people say eating... but that's not always correct ❌ | English vocabulary'\n\n"
+                    "2. DESCRIPTION: Write in this exact structure:\n"
+                    "- First: 1 engaging hook sentence about the video topic\n"
+                    "- Then: 2-3 sentences describing what viewers will learn\n"
+                    "- Then: 1 sentence about who this is perfect for (ESL learners, beginners, etc.)\n"
+                    "- Then: List the key vocabulary words from the script (if applicable)\n"
+                    "- Then: SEO keywords as a comma-separated list (15-20 keywords related to the topic)\n"
+                    "- Then: 5-8 hashtags: #learnenglish #englishvocabulary #englishlesson #esl and topic-specific ones\n"
+                    "- End with: Follow for more videos!\n\n"
+                    "Max 2000 characters total for description.\n"
+                    "Write everything in English.\n\n"
+                    "Respond ONLY in this exact format:\n"
+                    "TITLE: [title here]\n"
+                    "DESCRIPTION: [description here]\n\n"
                     f"SCRIPT:\n{script}"
                 ),
             }
@@ -84,11 +104,20 @@ def generate_metadata(script):
     text = message.content[0].text
     titre = ""
     description = ""
-    for line in text.splitlines():
-        if line.startswith("TITRE:"):
-            titre = line.replace("TITRE:", "").strip()
+    lines = text.splitlines()
+    desc_lines = []
+    in_desc = False
+    for line in lines:
+        if line.startswith("TITLE:"):
+            titre = line.replace("TITLE:", "").strip()
         elif line.startswith("DESCRIPTION:"):
-            description = line.replace("DESCRIPTION:", "").strip()
+            in_desc = True
+            first = line.replace("DESCRIPTION:", "").strip()
+            if first:
+                desc_lines.append(first)
+        elif in_desc:
+            desc_lines.append(line)
+    description = "\n".join(desc_lines).strip()
     return titre, description
 
 
@@ -99,7 +128,7 @@ def get_drive_file_id(drive_url):
     match = re.search(r"id=([a-zA-Z0-9_-]+)", drive_url)
     if match:
         return match.group(1)
-    raise ValueError(f"Impossible d'extraire le file ID depuis : {drive_url}")
+    raise ValueError(f"Cannot extract file ID from: {drive_url}")
 
 
 def download_video(drive_url):
@@ -116,14 +145,14 @@ def download_video(drive_url):
             if chunk:
                 f.write(chunk)
     size = os.path.getsize(tmp_path)
-    print(f"  Video telechargee: {tmp_path} ({size} bytes)")
+    print(f"  Video downloaded: {tmp_path} ({size} bytes)")
     return tmp_path
 
 
 def publish_video(video_path, titre, description, avatar, plateformes):
     profile = AVATAR_PROFILES.get(avatar.lower())
     if not profile:
-        raise ValueError(f"Avatar inconnu : {avatar}")
+        raise ValueError(f"Unknown avatar: {avatar}")
     platform_map = {
         "YouTube": "youtube",
         "Facebook": "facebook",
@@ -131,7 +160,7 @@ def publish_video(video_path, titre, description, avatar, plateformes):
         "TikTok": "tiktok",
     }
     platforms = [platform_map[p] for p in plateformes if p in platform_map]
-    print(f"  Publication sur: {platforms}")
+    print(f"  Publishing on: {platforms}")
     url = "https://api.upload-post.com/api/upload"
     with open(video_path, "rb") as video_file:
         response = requests.post(
@@ -144,8 +173,8 @@ def publish_video(video_path, titre, description, avatar, plateformes):
             ] + [("platform[]", p) for p in platforms],
             files={"video": video_file},
         )
-    print("UPLOAD STATUT:", response.status_code)
-    print("UPLOAD REPONSE:", response.text)
+    print("UPLOAD STATUS:", response.status_code)
+    print("UPLOAD RESPONSE:", response.text)
     result = response.json()
     return result
 
@@ -155,22 +184,22 @@ def mark_as_published(page_id):
     payload = {"properties": {"Statut": {"select": {"name": "Publie"}}}}
     response = requests.patch(url, headers=NOTION_HEADERS, json=payload)
     response.raise_for_status()
-    print("  Notion mis a jour -> Publie")
+    print("  Notion updated -> Publie")
 
 
 def main():
     tz = pytz.timezone("America/Toronto")
     now = datetime.now(tz)
-    print(f"Heure actuelle (Montreal) : {now.strftime('%H:%M')}")
+    print(f"Current time (Montreal): {now.strftime('%H:%M')}")
 
     videos = get_videos_to_publish()
-    print(f"{len(videos)} video(s) trouvee(s).")
+    print(f"{len(videos)} video(s) found.")
 
     for video in videos:
         props = video["properties"]
         page_id = video["id"]
 
-        titre_notion = props["Titre"]["title"][0]["plain_text"] if props["Titre"]["title"] else "Sans titre"
+        titre_notion = props["Titre"]["title"][0]["plain_text"] if props["Titre"]["title"] else "No title"
         script = props["Script"]["rich_text"][0]["plain_text"] if props["Script"]["rich_text"] else ""
         avatar = props["Avatar"]["select"]["name"] if props["Avatar"]["select"] else ""
         lien_video = props["Lien Video"]["url"] if props["Lien Video"]["url"] else ""
@@ -180,37 +209,37 @@ def main():
         print(f"\n--- {titre_notion} | {avatar} | Slot: {slot} ---")
 
         if not slot_is_due(slot):
-            print(f"  Slot {slot} pas encore du - ignore.")
+            print(f"  Slot {slot} not due yet - skipping.")
             continue
 
         if not lien_video:
-            print("  Pas de lien video - ignore.")
+            print("  No video link - skipping.")
             continue
 
         if not script:
-            print("  Pas de script - ignore.")
+            print("  No script - skipping.")
             continue
 
-        print("  Generation titre/description...")
-        titre, description = generate_metadata(script)
-        print(f"  Titre: {titre}")
-        print(f"  Description: {description}")
+        print("  Generating title/description...")
+        titre, description = generate_metadata(script, avatar)
+        print(f"  Title: {titre}")
+        print(f"  Description preview: {description[:150]}...")
 
-        print("  Telechargement video...")
+        print("  Downloading video...")
         video_path = download_video(lien_video)
 
-        print("  Publication...")
+        print("  Publishing...")
         result = publish_video(video_path, titre, description, avatar, plateformes)
-        print(f"  Resultat: {result}")
+        print(f"  Result: {result}")
 
         if result.get("success") and result.get("status") != "failed":
             mark_as_published(page_id)
         else:
-            print("  Publication echouee - Notion NON mis a jour")
+            print("  Publication failed - Notion NOT updated")
 
         os.remove(video_path)
 
-    print("\nTermine.")
+    print("\nDone.")
 
 
 if __name__ == "__main__":
