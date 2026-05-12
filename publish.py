@@ -30,7 +30,7 @@ def get_videos_to_publish():
                     }
                 },
                 {
-                    "property": "Date",
+                    "property": "Date Publication",
                     "date": {
                         "equals": today
                     }
@@ -72,5 +72,6 @@ if len(videos) > 0:
         print("FILE ID :", file_id)
     else:
         print("AUCUN FILE ID TROUVÉ")
+
 else:
     print("AUCUNE VIDÉO À PUBLIER")
