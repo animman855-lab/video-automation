@@ -135,7 +135,7 @@ def publish_video(video_path, titre, description, avatar, plateformes):
     }
     platforms = [platform_map[p] for p in plateformes if p in platform_map]
     print(f"  Publication sur: {platforms}")
-   url = "https://api.upload-post.com/api/upload"
+    url = "https://api.upload-post.com/api/upload"
     with open(video_path, "rb") as video_file:
         response = requests.post(
             url,
