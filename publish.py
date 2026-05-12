@@ -141,7 +141,7 @@ def publish_video(video_path, titre, description, avatar, plateformes):
             url,
             headers={"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"},
             data={
-                "profile": profile,
+                "username": profile,
                 "title": titre,
                 "description": description,
                 "platforms": ",".join(platforms),
