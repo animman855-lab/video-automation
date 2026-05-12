@@ -140,12 +140,11 @@ def publish_video(video_path, titre, description, avatar, plateformes):
         response = requests.post(
             url,
             headers={"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"},
-            data={
-                "username": profile,
-                "title": titre,
-                "description": description,
-                "platforms": ",".join(platforms),
-            },
+            data=[
+                ("user", profile),
+                ("title", titre),
+                ("description", description),
+            ] + [("platform[]", p) for p in platforms],
             files={"video": video_file},
         )
     print("UPLOAD STATUT:", response.status_code)
