@@ -47,9 +47,12 @@ def get_videos_to_publish():
     today = datetime.now(tz).strftime("%Y-%m-%d")
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     payload = {
-       "filter": {
-    "property": "Statut", "select": {"equals": "A publier"}
-}
+        "filter": {
+            "and": [
+                {"property": "Statut", "select": {"equals": "A publier"}},
+                {"property": "Date Publication", "date": {"equals": today}},
+            ]
+        }
     }
     response = requests.post(url, headers=NOTION_HEADERS, json=payload)
     print("NOTION STATUT:", response.status_code)
@@ -102,14 +105,11 @@ def get_drive_file_id(drive_url):
 def download_video(drive_url):
     file_id = get_drive_file_id(drive_url)
     print(f"  File ID: {file_id}")
-    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
     session = requests.Session()
+    download_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0&confirm=t"
     response = session.get(download_url, stream=True)
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            download_url = f"{download_url}&confirm={value}"
-            response = session.get(download_url, stream=True)
-            break
+    print(f"  Download status: {response.status_code}")
+    print(f"  Content-Type: {response.headers.get('Content-Type', 'unknown')}")
     tmp_path = f"/tmp/video_{file_id}.mp4"
     with open(tmp_path, "wb") as f:
         for chunk in response.iter_content(chunk_size=32768):
@@ -146,13 +146,13 @@ def publish_video(video_path, titre, description, avatar, plateformes):
         )
     print("UPLOAD STATUT:", response.status_code)
     print("UPLOAD REPONSE:", response.text)
-    response.raise_for_status()
-    return response.json()
+    result = response.json()
+    return result
 
 
 def mark_as_published(page_id):
     url = f"https://api.notion.com/v1/pages/{page_id}"
-    payload = {"properties": {"Statut": {"select": {"name": "Publié"}}}}
+    payload = {"properties": {"Statut": {"select": {"name": "Publie"}}}}
     response = requests.patch(url, headers=NOTION_HEADERS, json=payload)
     response.raise_for_status()
     print("  Notion mis a jour -> Publie")
@@ -203,7 +203,11 @@ def main():
         result = publish_video(video_path, titre, description, avatar, plateformes)
         print(f"  Resultat: {result}")
 
-        mark_as_published(page_id)
+        if result.get("success") and result.get("status") != "failed":
+            mark_as_published(page_id)
+        else:
+            print("  Publication echouee - Notion NON mis a jour")
+
         os.remove(video_path)
 
     print("\nTermine.")
