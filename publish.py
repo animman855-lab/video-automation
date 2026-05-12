@@ -48,7 +48,7 @@ def get_videos_to_publish():
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     payload = {
        "filter": {
-    "property": "Statut", "select": {"equals": "À publier"}
+    "property": "Statut", "select": {"equals": "A publier"}
 }
     }
     response = requests.post(url, headers=NOTION_HEADERS, json=payload)
