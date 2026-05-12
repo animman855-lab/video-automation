@@ -22,29 +22,33 @@ AVATAR_PROFILES = {
     "teacherryan":    "teacherryan",
 }
 
-# ── Étape 1 : Déterminer le slot courant ────────────────
-def get_current_slot():
+# Heure de chaque slot en minutes depuis minuit
+SLOT_HOURS = {
+    "08:00": 8 * 60,
+    "16:00": 16 * 60,
+    "00:00": 0,
+}
+
+# ── Étape 1 : Vérifier si un slot est dû ────────────────
+def slot_is_due(slot_name):
     tz = pytz.timezone("America/Toronto")
     now = datetime.now(tz)
-    hour = now.hour
-    minute = now.minute
-    total_minutes = hour * 60 + minute
+    current_minutes = now.hour * 60 + now.minute
 
-    # Tolérance de 59 minutes autour de chaque slot
-    slots = {
-        "08:00": 8 * 60,
-        "16:00": 16 * 60,
-        "00:00": 0,
-    }
+    slot_minutes = SLOT_HOURS.get(slot_name)
+    if slot_minutes is None:
+        return False
 
-    for slot_name, slot_minutes in slots.items():
-        if abs(total_minutes - slot_minutes) <= 59:
-            return slot_name
+    # Le slot est dû si l'heure actuelle est >= l'heure du slot
+    # et pas plus de 3 heures après (pour éviter de republier)
+    diff = current_minutes - slot_minutes
+    if slot_minutes == 0:  # minuit
+        diff = current_minutes if current_minutes < 180 else -1
 
-    return None
+    return 0 <= diff <= 180  # Dans les 3 heures suivant le slot
 
 # ── Étape 2 : Lire Notion ───────────────────────────────
-def get_videos_to_publish(slot):
+def get_videos_to_publish():
     tz = pytz.timezone("America/Toronto")
     today = datetime.now(tz).strftime("%Y-%m-%d")
 
@@ -54,7 +58,6 @@ def get_videos_to_publish(slot):
             "and": [
                 {"property": "Statut",          "select": {"equals": "À publier"}},
                 {"property": "Date Publication", "date":   {"equals": today}},
-                {"property": "Slot",             "select": {"equals": slot}},
             ]
         }
     }
@@ -167,14 +170,8 @@ def main():
     now = datetime.now(tz)
     print(f"Heure actuelle (Montréal) : {now.strftime('%H:%M')}")
 
-    slot = get_current_slot()
-    if not slot:
-        print(f"Aucun slot actif — rien à publier.")
-        return
-
-    print(f"Slot actif : {slot}")
-    videos = get_videos_to_publish(slot)
-    print(f"{len(videos)} vidéo(s) trouvée(s) à publier.")
+    videos = get_videos_to_publish()
+    print(f"{len(videos)} vidéo(s) trouvée(s) avec statut À publier aujourd'hui.")
 
     for video in videos:
         props = video["properties"]
@@ -185,8 +182,14 @@ def main():
         avatar       = props["Avatar"]["select"]["name"] if props["Avatar"]["select"] else ""
         lien_video   = props["Lien Video"]["url"] if props["Lien Video"]["url"] else ""
         plateformes  = [p["name"] for p in props["Plateforme"]["multi_select"]]
+        slot         = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
 
-        print(f"\nTraitement : {titre_notion} | Avatar : {avatar} | Plateformes : {plateformes}")
+        # Vérifier si le slot est dû
+        if not slot_is_due(slot):
+            print(f"  ⏳ Slot {slot} pas encore dû pour '{titre_notion}' — ignoré.")
+            continue
+
+        print(f"\nTraitement : {titre_notion} | Avatar : {avatar} | Slot : {slot} | Plateformes : {plateformes}")
 
         if not lien_video:
             print("  ⚠️  Pas de lien vidéo — ignoré.")
