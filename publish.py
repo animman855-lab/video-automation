@@ -47,12 +47,9 @@ def get_videos_to_publish():
     today = datetime.now(tz).strftime("%Y-%m-%d")
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     payload = {
-        "filter": {
-            "and": [
-                {"property": "Statut", "select": {"equals": "À publier"}},
-                {"property": "Date Publication", "date": {"equals": today}},
-            ]
-        }
+       "filter": {
+    "property": "Statut", "select": {"equals": "À publier"}
+}
     }
     response = requests.post(url, headers=NOTION_HEADERS, json=payload)
     print("NOTION STATUT:", response.status_code)
