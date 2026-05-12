@@ -5,10 +5,10 @@ from datetime import datetime
 import pytz
 
 # ── Config ──────────────────────────────────────────────
-NOTION_TOKEN        = os.environ["NOTION_TOKEN"]
-NOTION_DATABASE_ID  = os.environ["NOTION_DATABASE_ID"]
-UPLOAD_POST_API_KEY = os.environ["UPLOAD_POST_API_KEY"]
-ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"]
+NOTION_TOKEN        = os.environ["NOTION_TOKEN"].strip()
+NOTION_DATABASE_ID  = os.environ["NOTION_DATABASE_ID"].strip()
+UPLOAD_POST_API_KEY = os.environ["UPLOAD_POST_API_KEY"].strip()
+ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"].strip()
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -62,8 +62,10 @@ def get_videos_to_publish():
         }
     }
     response = requests.post(url, headers=NOTION_HEADERS, json=payload)
-    response.raise_for_status()
-    return response.json().get("results", [])
+   print("STATUS:", response.status_code)
+print("RESPONSE:", response.text)
+response.raise_for_status()
+return response.json().get("results", [])
 
 # ── Étape 3 : Générer titre + description via Claude ────
 def generate_metadata(script):
