@@ -71,8 +71,8 @@ def generate_metadata(script):
                 "content": (
                     "Tu es un expert en marketing de contenu video pour les reseaux sociaux.\n"
                     "A partir du script ci-dessous, genere :\n"
-                    "1. Un TITRE accrocheur (maximum 80 caracteres)\n"
-                    "2. Une DESCRIPTION engageante (maximum 200 caracteres) avec 3-5 hashtags\n\n"
+                    "1. Un TITRE accrocheur (maximum 30 caracteres STRICT)\n"
+                    "2. Une DESCRIPTION (maximum 20 caracteres STRICT, pas de hashtags)\n\n"
                     "Reponds UNIQUEMENT dans ce format exact :\n"
                     "TITRE: [titre ici]\n"
                     "DESCRIPTION: [description ici]\n\n"
