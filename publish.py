@@ -271,6 +271,7 @@ def main():
 
         print("  Generating platform-specific content...")
         metadata = generate_metadata(script, avatar, plateformes)
+        print("METADATA:", metadata)
 
         print("  Downloading video...")
         video_path = download_video(lien_video)
