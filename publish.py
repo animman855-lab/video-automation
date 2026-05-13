@@ -136,12 +136,12 @@ TITLE rules:
   * NATIVE SPEAKERS DON'T SAY "[X]" ❌
   * LEARN THIS NOW 🔥
 - Adapt to match the script content
-- Max 80 characters
+- After the hook, add exactly these 5 hashtags: #learnenglish #speakenglish #englishvocab #dailyenglish {avatar_hashtag}
+- Total title must be under 120 characters
+- Example: STOP SAYING "SUGGEST TO" ❌ #learnenglish #speakenglish #englishvocab #dailyenglish {avatar_hashtag}
 
 DESCRIPTION rules:
-- Very short, max 150 characters
-- Quick list with dashes
-- End with: #learnenglish #englishconversation #speakenglish #vocabulary #reallifeenglish #dailyenglish #LearnOnTikTok {avatar_hashtag}
+- Leave completely empty. Write nothing.
 
 === INSTAGRAM ===
 TITLE rules:
