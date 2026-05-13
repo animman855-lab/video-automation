@@ -28,6 +28,16 @@ AVATAR_HASHTAG = {
     "teacherryan": "#teacherryan",
 }
 
+YOUTUBE_HASHTAGS = [
+    "#englishmastery",
+    "#englishvocab",
+    "#englishvoice",
+    "#learnenglish",
+    "#englishlesson",
+    "#spokenenglish",
+    "#englishspeaking",
+]
+
 SLOT_HOURS = {
     "08:00": 8 * 60,
     "16:00": 16 * 60,
@@ -66,10 +76,15 @@ def get_videos_to_publish():
     return response.json().get("results", [])
 
 
-def generate_metadata(script, avatar, plateformes):
+def get_youtube_hashtag(index):
+    return YOUTUBE_HASHTAGS[index % len(YOUTUBE_HASHTAGS)]
+
+
+def generate_metadata(script, avatar, plateformes, video_index=0):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), "")
+    youtube_hashtag = get_youtube_hashtag(video_index)
 
     avatar_context = {
         "oliviaa": "an elderly English teacher woman (Oliviaa) who teaches English vocabulary and pronunciation to beginners and ESL learners in a simple, clear and warm grandmotherly way.",
@@ -77,57 +92,95 @@ def generate_metadata(script, avatar, plateformes):
         "teacherryan": "a business English teacher man (TeacherRyan) who teaches professional English, business vocabulary and communication skills.",
     }
     context = avatar_context.get(avatar.lower(), "an English teacher")
-
     platforms_str = ", ".join(plateformes)
 
     prompt = f"""You are a social media expert creating content for {context}
 
 Based on the video script below, generate optimized content for these platforms: {platforms_str}
 
-RULES PER PLATFORM:
+STRICT RULES PER PLATFORM:
 
-YOUTUBE format:
-- TITLE: Long SEO title. Use patterns like 'Don't Say "X" ❌ Say This Instead' or 'Learn [Topic] | Easy English Practice'. Add 1-2 emojis. Max 90 chars.
-- DESCRIPTION: 
-  * Line 1: Repeat the title
-  * 2-3 engaging intro sentences
-  * List with ✅ of what viewers will learn
-  * "Perfect for beginners, ESL learners..."
-  * "Watch, listen, and repeat..."
-  * SEO keywords as comma-separated list
-  * 4-5 hashtags: #learnenglish #englishvocabulary #englishlesson #esl + topic hashtag
-  * {avatar_hashtag}
+=== YOUTUBE ===
+TITLE rules:
+- Use a VARIED pattern based on script content. Examples:
+  * Don't Say "[wrong word]" ❌ Say This Instead {youtube_hashtag}
+  * Stop Using "[phrase]" ❌ Native Speakers Say This {youtube_hashtag}
+  * Most People Say "[X]" Wrong ❌ Here's The Right Way {youtube_hashtag}
+  * Learn These [Topic] Words ❌ You Didn't Know {youtube_hashtag}
+- Always end with exactly this hashtag: {youtube_hashtag}
+- Max 90 characters total
+- Adapt the pattern to match what the script is actually about
 
-TIKTOK format:
-- TITLE: ONE line in CAPS. Very punchy hook. Example: STOP SAYING "EATING" ❌ or DON'T SAY THIS IN ENGLISH ❌
-- DESCRIPTION: Very short. Use dashes for quick list. Max 150 chars.
-- END WITH: #learnenglish #englishconversation #speakenglish #vocabulary #reallifeenglish #dailyenglish #LearnOnTikTok {avatar_hashtag}
+DESCRIPTION rules:
+- Line 1: Repeat the title exactly
+- Blank line
+- 2-3 engaging intro sentences about the topic
+- Blank line
+- List with ✅ of 3-5 things viewers will learn (from the script)
+- Blank line
+- "Perfect for beginners, ESL learners, and anyone improving their English."
+- "Watch, listen, and repeat to build strong vocabulary naturally."
+- Blank line
+- SEO keywords as comma-separated list (15-20 keywords related to the topic)
+- Blank line
+- Hashtags: #learnenglish #englishvocabulary #englishlesson #esl #spokenenglish {avatar_hashtag}
 
-INSTAGRAM format:
-- TITLE: Start with intriguing question. Example: "Did you know most people say this wrong? 🤔"
-- DESCRIPTION:
-  * Pedagogical list of 3-5 points with emojis as arrows
-  * End with engagement question: "Which word was new for you? 💬"
-  * Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + topic hashtags
+=== TIKTOK ===
+TITLE rules:
+- ONE line in CAPS, very punchy hook
+- Vary the pattern based on script:
+  * STOP SAYING "[X]" ❌
+  * DON'T SAY THIS IN ENGLISH ❌
+  * MOST PEOPLE SAY THIS WRONG ❌
+  * YOU'RE PRONOUNCING THIS WRONG ❌
+  * NATIVE SPEAKERS DON'T SAY "[X]" ❌
+  * LEARN THIS NOW 🔥
+- Adapt to match the script content
+- Max 80 characters
 
-FACEBOOK format:
-- TITLE: Start with intriguing question. Example: "Did you know most people say this wrong? 🤔"
-- DESCRIPTION:
-  * Pedagogical list of 3-5 points with emojis as arrows
-  * End with engagement question: "Which word was new for you? 💬"
-  * Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + topic hashtags
+DESCRIPTION rules:
+- Very short, max 150 characters
+- Quick list with dashes
+- End with: #learnenglish #englishconversation #speakenglish #vocabulary #reallifeenglish #dailyenglish #LearnOnTikTok {avatar_hashtag}
+
+=== INSTAGRAM ===
+TITLE rules:
+- Start with an intriguing question based on the script
+- Add 1-2 relevant emojis
+- Example: "Did you know most people say this wrong? 🤔"
+- Adapt to the actual script topic
+
+DESCRIPTION rules:
+- Pedagogical list of points with emoji arrows (👉) - number of points based on script content
+- Each point teaches something from the script
+- Blank line
+- End with engagement question: "Which [word/trick/expression] was new for you? 💬"
+- Blank line
+- Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + 3-4 topic-specific hashtags
+
+=== FACEBOOK ===
+TITLE rules:
+- Same as Instagram - intriguing question based on script
+- Add 1-2 relevant emojis
+
+DESCRIPTION rules:
+- Same format as Instagram
+- Pedagogical list with emoji arrows (👉)
+- Engagement question at end
+- Same hashtags as Instagram
 
 Write everything in English.
+Only generate sections for platforms in: {platforms_str}
 
-Respond ONLY in this exact format (include only platforms that are in: {platforms_str}):
-YOUTUBE_TITLE: [title]
-YOUTUBE_DESCRIPTION: [description]
-TIKTOK_TITLE: [title]
-TIKTOK_DESCRIPTION: [description]
-INSTAGRAM_TITLE: [title]
-INSTAGRAM_DESCRIPTION: [description]
-FACEBOOK_TITLE: [title]
-FACEBOOK_DESCRIPTION: [description]
+Respond ONLY in this exact format:
+YOUTUBE_TITLE: [title here]
+YOUTUBE_DESCRIPTION: [description here]
+TIKTOK_TITLE: [title here]
+TIKTOK_DESCRIPTION: [description here]
+INSTAGRAM_TITLE: [title here]
+INSTAGRAM_DESCRIPTION: [description here]
+FACEBOOK_TITLE: [title here]
+FACEBOOK_DESCRIPTION: [description here]
 
 SCRIPT:
 {script}"""
@@ -143,11 +196,13 @@ SCRIPT:
     current_key = None
     current_lines = []
 
+    keys = ["YOUTUBE_TITLE", "YOUTUBE_DESCRIPTION", "TIKTOK_TITLE",
+            "TIKTOK_DESCRIPTION", "INSTAGRAM_TITLE", "INSTAGRAM_DESCRIPTION",
+            "FACEBOOK_TITLE", "FACEBOOK_DESCRIPTION"]
+
     for line in text.splitlines():
         matched = False
-        for key in ["YOUTUBE_TITLE", "YOUTUBE_DESCRIPTION", "TIKTOK_TITLE",
-                    "TIKTOK_DESCRIPTION", "INSTAGRAM_TITLE", "INSTAGRAM_DESCRIPTION",
-                    "FACEBOOK_TITLE", "FACEBOOK_DESCRIPTION"]:
+        for key in keys:
             if line.startswith(f"{key}:"):
                 if current_key:
                     result[current_key] = "\n".join(current_lines).strip()
@@ -244,7 +299,7 @@ def main():
     videos = get_videos_to_publish()
     print(f"{len(videos)} video(s) found.")
 
-    for video in videos:
+    for index, video in enumerate(videos):
         props = video["properties"]
         page_id = video["id"]
 
@@ -270,15 +325,14 @@ def main():
             continue
 
         print("  Generating platform-specific content...")
-        metadata = generate_metadata(script, avatar, plateformes)
-        print("METADATA:", metadata)
+        metadata = generate_metadata(script, avatar, plateformes, index)
 
         print("  Downloading video...")
         video_path = download_video(lien_video)
 
         all_success = True
         for platform in plateformes:
-            platform_upper = platform.upper().replace(" ", "")
+            platform_upper = platform.upper().replace(" ", "").replace("TIKTOK", "TIKTOK")
             titre = metadata.get(f"{platform_upper}_TITLE", "")
             description = metadata.get(f"{platform_upper}_DESCRIPTION", "")
 
@@ -288,19 +342,19 @@ def main():
                 description = metadata.get("YOUTUBE_DESCRIPTION", "")
 
             print(f"\n  [{platform}]")
-            print(f"  Title: {titre[:60]}...")
-            print(f"  Description preview: {description[:80]}...")
+            print(f"  Title: {titre[:80]}")
+            print(f"  Description preview: {description[:100]}...")
 
             result = publish_video(video_path, titre, description, avatar, platform)
 
             if not (result.get("success") and result.get("status") != "failed"):
                 all_success = False
-                print(f"  ❌ Failed on {platform}")
+                print(f"  Failed on {platform}")
 
         if all_success:
             mark_as_published(page_id)
         else:
-            print("  ⚠️ Some platforms failed - Notion NOT updated")
+            print("  Some platforms failed - Notion NOT updated")
 
         os.remove(video_path)
 
