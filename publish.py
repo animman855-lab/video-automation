@@ -22,6 +22,12 @@ AVATAR_PROFILES = {
     "teacherryan": "teacherryan",
 }
 
+AVATAR_HASHTAG = {
+    "oliviaa": "#oliviaa",
+    "thefluentbuild": "#thefluentbuild",
+    "teacherryan": "#teacherryan",
+}
+
 SLOT_HOURS = {
     "08:00": 8 * 60,
     "16:00": 16 * 60,
@@ -60,65 +66,102 @@ def get_videos_to_publish():
     return response.json().get("results", [])
 
 
-def generate_metadata(script, avatar):
+def generate_metadata(script, avatar, plateformes):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    avatar_context = {
-        "oliviaa": "an elderly English teacher woman who teaches English vocabulary and pronunciation to beginners and ESL learners in a simple, clear and warm way.",
-        "thefluentbuild": "a mature woman who teaches English fluency, speaking confidence and everyday conversation skills.",
-        "teacherryan": "a business English teacher man who teaches professional English, business vocabulary and communication skills.",
-    }
+    avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), "")
 
+    avatar_context = {
+        "oliviaa": "an elderly English teacher woman (Oliviaa) who teaches English vocabulary and pronunciation to beginners and ESL learners in a simple, clear and warm grandmotherly way.",
+        "thefluentbuild": "a mature woman (TheFluentBuild) who teaches English fluency, speaking confidence and everyday conversation skills.",
+        "teacherryan": "a business English teacher man (TeacherRyan) who teaches professional English, business vocabulary and communication skills.",
+    }
     context = avatar_context.get(avatar.lower(), "an English teacher")
+
+    platforms_str = ", ".join(plateformes)
+
+    prompt = f"""You are a social media expert creating content for {context}
+
+Based on the video script below, generate optimized content for these platforms: {platforms_str}
+
+RULES PER PLATFORM:
+
+YOUTUBE format:
+- TITLE: Long SEO title. Use patterns like 'Don't Say "X" ❌ Say This Instead' or 'Learn [Topic] | Easy English Practice'. Add 1-2 emojis. Max 90 chars.
+- DESCRIPTION: 
+  * Line 1: Repeat the title
+  * 2-3 engaging intro sentences
+  * List with ✅ of what viewers will learn
+  * "Perfect for beginners, ESL learners..."
+  * "Watch, listen, and repeat..."
+  * SEO keywords as comma-separated list
+  * 4-5 hashtags: #learnenglish #englishvocabulary #englishlesson #esl + topic hashtag
+  * {avatar_hashtag}
+
+TIKTOK format:
+- TITLE: ONE line in CAPS. Very punchy hook. Example: STOP SAYING "EATING" ❌ or DON'T SAY THIS IN ENGLISH ❌
+- DESCRIPTION: Very short. Use dashes for quick list. Max 150 chars.
+- END WITH: #learnenglish #englishconversation #speakenglish #vocabulary #reallifeenglish #dailyenglish #LearnOnTikTok {avatar_hashtag}
+
+INSTAGRAM format:
+- TITLE: Start with intriguing question. Example: "Did you know most people say this wrong? 🤔"
+- DESCRIPTION:
+  * Pedagogical list of 3-5 points with emojis as arrows
+  * End with engagement question: "Which word was new for you? 💬"
+  * Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + topic hashtags
+
+FACEBOOK format:
+- TITLE: Start with intriguing question. Example: "Did you know most people say this wrong? 🤔"
+- DESCRIPTION:
+  * Pedagogical list of 3-5 points with emojis as arrows
+  * End with engagement question: "Which word was new for you? 💬"
+  * Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + topic hashtags
+
+Write everything in English.
+
+Respond ONLY in this exact format (include only platforms that are in: {platforms_str}):
+YOUTUBE_TITLE: [title]
+YOUTUBE_DESCRIPTION: [description]
+TIKTOK_TITLE: [title]
+TIKTOK_DESCRIPTION: [description]
+INSTAGRAM_TITLE: [title]
+INSTAGRAM_DESCRIPTION: [description]
+FACEBOOK_TITLE: [title]
+FACEBOOK_DESCRIPTION: [description]
+
+SCRIPT:
+{script}"""
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=1000,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"You are a social media expert creating content for {context}\n\n"
-                    "Based on the video script below, generate:\n\n"
-                    "1. TITLE: An engaging, curiosity-driven title with 1-2 relevant emojis. "
-                    "Max 90 characters. Examples: '99% of People Don't Know These Egg Names 🥚🍳', "
-                    "'Most people say eating... but that's not always correct ❌ | English vocabulary'\n\n"
-                    "2. DESCRIPTION: Write in this exact structure:\n"
-                    "- First: 1 engaging hook sentence about the video topic\n"
-                    "- Then: 2-3 sentences describing what viewers will learn\n"
-                    "- Then: 1 sentence about who this is perfect for (ESL learners, beginners, etc.)\n"
-                    "- Then: List the key vocabulary words from the script (if applicable)\n"
-                    "- Then: SEO keywords as a comma-separated list (15-20 keywords related to the topic)\n"
-                    "- Then: 5-8 hashtags: #learnenglish #englishvocabulary #englishlesson #esl and topic-specific ones\n"
-                    "- End with: Follow for more videos!\n\n"
-                    "Max 2000 characters total for description.\n"
-                    "Write everything in English.\n\n"
-                    "Respond ONLY in this exact format:\n"
-                    "TITLE: [title here]\n"
-                    "DESCRIPTION: [description here]\n\n"
-                    f"SCRIPT:\n{script}"
-                ),
-            }
-        ],
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
     )
+
     text = message.content[0].text
-    titre = ""
-    description = ""
-    lines = text.splitlines()
-    desc_lines = []
-    in_desc = False
-    for line in lines:
-        if line.startswith("TITLE:"):
-            titre = line.replace("TITLE:", "").strip()
-        elif line.startswith("DESCRIPTION:"):
-            in_desc = True
-            first = line.replace("DESCRIPTION:", "").strip()
-            if first:
-                desc_lines.append(first)
-        elif in_desc:
-            desc_lines.append(line)
-    description = "\n".join(desc_lines).strip()
-    return titre, description
+    result = {}
+    current_key = None
+    current_lines = []
+
+    for line in text.splitlines():
+        matched = False
+        for key in ["YOUTUBE_TITLE", "YOUTUBE_DESCRIPTION", "TIKTOK_TITLE",
+                    "TIKTOK_DESCRIPTION", "INSTAGRAM_TITLE", "INSTAGRAM_DESCRIPTION",
+                    "FACEBOOK_TITLE", "FACEBOOK_DESCRIPTION"]:
+            if line.startswith(f"{key}:"):
+                if current_key:
+                    result[current_key] = "\n".join(current_lines).strip()
+                current_key = key
+                current_lines = [line[len(f"{key}:"):].strip()]
+                matched = True
+                break
+        if not matched and current_key:
+            current_lines.append(line)
+
+    if current_key:
+        result[current_key] = "\n".join(current_lines).strip()
+
+    return result
 
 
 def get_drive_file_id(drive_url):
@@ -149,18 +192,23 @@ def download_video(drive_url):
     return tmp_path
 
 
-def publish_video(video_path, titre, description, avatar, plateformes):
+def publish_video(video_path, titre, description, avatar, platform):
     profile = AVATAR_PROFILES.get(avatar.lower())
     if not profile:
         raise ValueError(f"Unknown avatar: {avatar}")
+
     platform_map = {
         "YouTube": "youtube",
         "Facebook": "facebook",
         "Instagram": "instagram",
         "TikTok": "tiktok",
     }
-    platforms = [platform_map[p] for p in plateformes if p in platform_map]
-    print(f"  Publishing on: {platforms}")
+
+    platform_key = platform_map.get(platform)
+    if not platform_key:
+        raise ValueError(f"Unknown platform: {platform}")
+
+    print(f"  Publishing on: {platform_key}")
     url = "https://api.upload-post.com/api/upload"
     with open(video_path, "rb") as video_file:
         response = requests.post(
@@ -170,11 +218,12 @@ def publish_video(video_path, titre, description, avatar, plateformes):
                 ("user", profile),
                 ("title", titre),
                 ("description", description),
-            ] + [("platform[]", p) for p in platforms],
-            files={"video": video_file},
+                ("platform[]", platform_key),
+            ],
+            files={"video": ("video.mp4", video_file, "video/mp4")},
         )
-    print("UPLOAD STATUS:", response.status_code)
-    print("UPLOAD RESPONSE:", response.text)
+    print(f"  UPLOAD STATUS {platform}: {response.status_code}")
+    print(f"  UPLOAD RESPONSE {platform}: {response.text[:200]}")
     result = response.json()
     return result
 
@@ -206,7 +255,7 @@ def main():
         plateformes = [p["name"] for p in props["Plateforme"]["multi_select"]]
         slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
 
-        print(f"\n--- {titre_notion} | {avatar} | Slot: {slot} ---")
+        print(f"\n--- {titre_notion} | {avatar} | Slot: {slot} | Platforms: {plateformes} ---")
 
         if not slot_is_due(slot):
             print(f"  Slot {slot} not due yet - skipping.")
@@ -220,22 +269,37 @@ def main():
             print("  No script - skipping.")
             continue
 
-        print("  Generating title/description...")
-        titre, description = generate_metadata(script, avatar)
-        print(f"  Title: {titre}")
-        print(f"  Description preview: {description[:150]}...")
+        print("  Generating platform-specific content...")
+        metadata = generate_metadata(script, avatar, plateformes)
 
         print("  Downloading video...")
         video_path = download_video(lien_video)
 
-        print("  Publishing...")
-        result = publish_video(video_path, titre, description, avatar, plateformes)
-        print(f"  Result: {result}")
+        all_success = True
+        for platform in plateformes:
+            platform_upper = platform.upper().replace(" ", "")
+            titre = metadata.get(f"{platform_upper}_TITLE", "")
+            description = metadata.get(f"{platform_upper}_DESCRIPTION", "")
 
-        if result.get("success") and result.get("status") != "failed":
+            if not titre:
+                titre = metadata.get("YOUTUBE_TITLE", titre_notion)
+            if not description:
+                description = metadata.get("YOUTUBE_DESCRIPTION", "")
+
+            print(f"\n  [{platform}]")
+            print(f"  Title: {titre[:60]}...")
+            print(f"  Description preview: {description[:80]}...")
+
+            result = publish_video(video_path, titre, description, avatar, platform)
+
+            if not (result.get("success") and result.get("status") != "failed"):
+                all_success = False
+                print(f"  ❌ Failed on {platform}")
+
+        if all_success:
             mark_as_published(page_id)
         else:
-            print("  Publication failed - Notion NOT updated")
+            print("  ⚠️ Some platforms failed - Notion NOT updated")
 
         os.remove(video_path)
 
