@@ -43,11 +43,11 @@ AVATAR_CONTEXT = {
 }
 
 PINTEREST_BOARDS = {
-    "oliviaa": "1077764435850980486",
-    "cindy": "1053194462740201867",
-    "teacherryan": "1139481230807755359",
-    "thefluentbuild": "1108800439448654918",  # confirmed via API
-    "kayla": "1099496734139945391",
+    "oliviaa": "1108800439448657315",
+    "cindy": "1108800439448657317",
+    "teacherryan": "1108800439448657320",
+    "thefluentbuild": "1108800439448654918",
+    "kayla": "1108800439448657323",
 }
 
 YOUTUBE_HASHTAGS = [
