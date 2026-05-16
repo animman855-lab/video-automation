@@ -44,7 +44,7 @@ PINTEREST_BOARDS = {
     "oliviaa": "1077764435850980486",
     "cindy": "1053194462740201867",
     "teacherryan": "1139481230807755359",
-    "thefluentbuild": "1016687947116801235",
+    "thefluentbuild": "1108800439448654918",  # confirmed via API
     "kayla": "1099496734139945391",
 }
 
@@ -283,18 +283,19 @@ def publish_video(video_path, titre, description, avatar, platform):
 
     # Build data params
     if platform_key == "pinterest":
-        board_id = PINTEREST_BOARDS.get(avatar.lower(), "")
-        if not board_id:
-            print(f"  WARNING: No Pinterest Board ID for {avatar} - skipping Pinterest")
-            return {"success": False, "message": f"No Pinterest Board ID configured for {avatar}"}
-        print(f"  Pinterest Board ID: {board_id}")
-        data_params = [
-            ("user", profile),
-            ("pinterest_title", titre),
-            ("pinterest_description", pinterest_description),
-            ("platform[]", platform_key),
-            # ("pinterest_board_id", board_id),  # TEST: disabled temporarily
-        ]
+        if avatar.lower() == "thefluentbuild":
+            board_id = "1108800439448654918"
+            print(f"  Pinterest Board ID: {board_id}")
+            data_params = [
+                ("user", profile),
+                ("pinterest_title", titre),
+                ("pinterest_description", pinterest_description),
+                ("platform[]", platform_key),
+                ("pinterest_board_id", board_id),
+            ]
+        else:
+            print(f"  [Pinterest] Ignored for avatar {avatar} - only thefluentbuild supported")
+            return {"success": True, "status": "skipped", "message": f"Pinterest ignored for {avatar}"}
     else:
         data_params = [
             ("user", profile),
