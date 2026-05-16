@@ -276,29 +276,32 @@ def publish_video(video_path, titre, description, avatar, platform):
     print(f"  Publishing on: {platform_key}")
     url = "https://api.upload-post.com/api/upload"
 
-    # Build data params
-    data_params = [
-        ("user", profile),
-        ("title", titre),
-        ("description", description),
-        ("platform[]", platform_key),
-    ]
+    # Truncate Pinterest description to 480 chars
+    pinterest_description = description
+    if pinterest_description and len(pinterest_description) > 480:
+        pinterest_description = pinterest_description[:477] + "..."
 
-    # Add Pinterest Board ID if publishing to Pinterest
+    # Build data params
     if platform_key == "pinterest":
         board_id = PINTEREST_BOARDS.get(avatar.lower(), "")
-        if board_id:
-            data_params.append(("pinterest_board_id", board_id))
-            print(f"  Pinterest Board ID: {board_id}")
-            # Truncate description to 480 chars max for Pinterest
-            if description and len(description) > 480:
-                description = description[:477] + "..."
-                print(f"  Pinterest description truncated to 480 chars")
-            # Update description in data_params
-            data_params = [(k, v if k != "description" else description) for k, v in data_params]
-        else:
+        if not board_id:
             print(f"  WARNING: No Pinterest Board ID for {avatar} - skipping Pinterest")
             return {"success": False, "message": f"No Pinterest Board ID configured for {avatar}"}
+        print(f"  Pinterest Board ID: {board_id}")
+        data_params = [
+            ("user", profile),
+            ("pinterest_title", titre),
+            ("pinterest_description", pinterest_description),
+            ("platform[]", platform_key),
+            ("pinterest_board_id", board_id),
+        ]
+    else:
+        data_params = [
+            ("user", profile),
+            ("title", titre),
+            ("description", description),
+            ("platform[]", platform_key),
+        ]
 
     with open(video_path, "rb") as video_file:
         response = requests.post(
