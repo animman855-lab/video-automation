@@ -40,6 +40,14 @@ AVATAR_CONTEXT = {
     "kayla": "a charismatic 32-year-old relationship expert who teaches flirting vocabulary, emotional intelligence and dating English to 20-35 year olds.",
 }
 
+PINTEREST_BOARDS = {
+    "oliviaa": "",
+    "thefluentbuild": "1016687947116801235",
+    "teacherryan": "",
+    "cindy": "",
+    "kayla": "1099496734139945391",
+}
+
 YOUTUBE_HASHTAGS = [
     "#englishmastery",
     "#englishvocab",
@@ -267,16 +275,30 @@ def publish_video(video_path, titre, description, avatar, platform):
 
     print(f"  Publishing on: {platform_key}")
     url = "https://api.upload-post.com/api/upload"
+
+    # Build data params
+    data_params = [
+        ("user", profile),
+        ("title", titre),
+        ("description", description),
+        ("platform[]", platform_key),
+    ]
+
+    # Add Pinterest Board ID if publishing to Pinterest
+    if platform_key == "pinterest":
+        board_id = PINTEREST_BOARDS.get(avatar.lower(), "")
+        if board_id:
+            data_params.append(("pinterest_board_id", board_id))
+            print(f"  Pinterest Board ID: {board_id}")
+        else:
+            print(f"  WARNING: No Pinterest Board ID for {avatar} - skipping Pinterest")
+            return {"success": False, "message": f"No Pinterest Board ID configured for {avatar}"}
+
     with open(video_path, "rb") as video_file:
         response = requests.post(
             url,
             headers={"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"},
-            data=[
-                ("user", profile),
-                ("title", titre),
-                ("description", description),
-                ("platform[]", platform_key),
-            ],
+            data=data_params,
             files={"video": ("video.mp4", video_file, "video/mp4")},
         )
     print(f"  UPLOAD STATUS {platform}: {response.status_code}")
