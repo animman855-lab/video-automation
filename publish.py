@@ -293,7 +293,7 @@ def publish_video(video_path, titre, description, avatar, platform):
             ("pinterest_title", titre),
             ("pinterest_description", pinterest_description),
             ("platform[]", platform_key),
-            ("pinterest_board_id", board_id),
+            # ("pinterest_board_id", board_id),  # TEST: disabled temporarily
         ]
     else:
         data_params = [
