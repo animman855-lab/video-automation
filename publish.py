@@ -9,6 +9,7 @@ NOTION_TOKEN = os.environ["NOTION_TOKEN"].strip()
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 UPLOAD_POST_API_KEY = os.environ["UPLOAD_POST_API_KEY"].strip()
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
+EBOOK_LINK = "https://mybook.to/100EnglishMistakes"
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
