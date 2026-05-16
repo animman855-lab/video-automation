@@ -302,12 +302,14 @@ def publish_video(video_path, titre, description, avatar, platform):
             ("pinterest_board_id", board_id),
         ]
     else:
-        data_params = [
-            ("user", profile),
-            ("title", titre),
-            ("description", description),
-            ("platform[]", platform_key),
-        ]
+       data_params = [
+    ("user", PINTEREST_PROFILE),
+    ("pinterest_title", titre),
+    ("pinterest_description", pinterest_desc_with_link),
+    ("platform[]", platform_key),
+    ("pinterest_board_id", board_id),
+    ("pinterest_link", EBOOK_LINK),
+]
 
     with open(video_path, "rb") as video_file:
         response = requests.post(
