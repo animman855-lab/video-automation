@@ -283,19 +283,22 @@ def publish_video(video_path, titre, description, avatar, platform):
 
     # Build data params
     if platform_key == "pinterest":
-        if avatar.lower() == "thefluentbuild":
-            board_id = "1108800439448654918"
-            print(f"  Pinterest Board ID: {board_id}")
-            data_params = [
-                ("user", profile),
-                ("pinterest_title", titre),
-                ("pinterest_description", pinterest_description),
-                ("platform[]", platform_key),
-                ("pinterest_board_id", board_id),
-            ]
-        else:
-            print(f"  [Pinterest] Ignored for avatar {avatar} - only thefluentbuild supported")
-            return {"success": True, "status": "skipped", "message": f"Pinterest ignored for {avatar}"}
+        board_id = PINTEREST_BOARDS.get(avatar.lower(), "")
+        if not board_id:
+            print(f"  [Pinterest] No board ID for {avatar} - skipping")
+            return {"success": True, "status": "skipped", "message": f"Pinterest skipped for {avatar}"}
+        print(f"  Pinterest Board ID: {board_id}")
+        # Add ebook link to Pinterest description
+        pinterest_desc_with_link = pinterest_description
+        if len(pinterest_desc_with_link) + len(f"\n\nLearn more: {EBOOK_LINK}") <= 480:
+            pinterest_desc_with_link += f"\n\nLearn more: {EBOOK_LINK}"
+        data_params = [
+            ("user", PINTEREST_PROFILE),
+            ("pinterest_title", titre),
+            ("pinterest_description", pinterest_desc_with_link),
+            ("platform[]", platform_key),
+            ("pinterest_board_id", board_id),
+        ]
     else:
         data_params = [
             ("user", profile),
