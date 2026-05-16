@@ -41,10 +41,10 @@ AVATAR_CONTEXT = {
 }
 
 PINTEREST_BOARDS = {
-    "oliviaa": "",
+    "oliviaa": "1077764435850980486",
+    "cindy": "1053194462740201867",
+    "teacherryan": "1139481230807755359",
     "thefluentbuild": "1016687947116801235",
-    "teacherryan": "",
-    "cindy": "",
     "kayla": "1099496734139945391",
 }
 
@@ -290,6 +290,12 @@ def publish_video(video_path, titre, description, avatar, platform):
         if board_id:
             data_params.append(("pinterest_board_id", board_id))
             print(f"  Pinterest Board ID: {board_id}")
+            # Truncate description to 480 chars max for Pinterest
+            if description and len(description) > 480:
+                description = description[:477] + "..."
+                print(f"  Pinterest description truncated to 480 chars")
+            # Update description in data_params
+            data_params = [(k, v if k != "description" else description) for k, v in data_params]
         else:
             print(f"  WARNING: No Pinterest Board ID for {avatar} - skipping Pinterest")
             return {"success": False, "message": f"No Pinterest Board ID configured for {avatar}"}
