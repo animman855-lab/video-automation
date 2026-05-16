@@ -20,12 +20,24 @@ AVATAR_PROFILES = {
     "oliviaa": "oliviaa",
     "thefluentbuild": "thefluentbuild",
     "teacherryan": "teacherryan",
+    "cindy": "cindy",
+    "kayla": "kayla",
 }
 
 AVATAR_HASHTAG = {
     "oliviaa": "#oliviaa",
     "thefluentbuild": "#thefluentbuild",
     "teacherryan": "#teacherryan",
+    "cindy": "#cindy",
+    "kayla": "#kayla",
+}
+
+AVATAR_CONTEXT = {
+    "oliviaa": "a 23-year-old sassy Gen Z English teacher who teaches modern slang, idioms and social media English to 18-30 year olds.",
+    "thefluentbuild": "an elegant older woman who teaches classic vocabulary, politeness and fundamental grammar to 35-70 year olds in a warm and pedagogical way.",
+    "teacherryan": "a confident male business English coach who teaches corporate jargon, emails, meetings and negotiations to 25-50 year old professionals.",
+    "cindy": "a spontaneous 28-year-old travel enthusiast who teaches airport survival, hotel vocabulary and international lifestyle English to 22-35 year old travelers.",
+    "kayla": "a charismatic 32-year-old relationship expert who teaches flirting vocabulary, emotional intelligence and dating English to 20-35 year olds.",
 }
 
 YOUTUBE_HASHTAGS = [
@@ -83,15 +95,9 @@ def get_youtube_hashtag(index):
 def generate_metadata(script, avatar, plateformes, video_index=0):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), "")
+    avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), f"#{avatar.lower()}")
     youtube_hashtag = get_youtube_hashtag(video_index)
-
-    avatar_context = {
-        "oliviaa": "an elderly English teacher woman (Oliviaa) who teaches English vocabulary and pronunciation to beginners and ESL learners in a simple, clear and warm grandmotherly way.",
-        "thefluentbuild": "a mature woman (TheFluentBuild) who teaches English fluency, speaking confidence and everyday conversation skills.",
-        "teacherryan": "a business English teacher man (TeacherRyan) who teaches professional English, business vocabulary and communication skills.",
-    }
-    context = avatar_context.get(avatar.lower(), "an English teacher")
+    context = AVATAR_CONTEXT.get(avatar.lower(), "an English teacher")
     platforms_str = ", ".join(plateformes)
 
     prompt = f"""You are a social media expert creating content for {context}
@@ -109,65 +115,54 @@ TITLE rules:
   * Learn These [Topic] Words ❌ You Didn't Know {youtube_hashtag}
 - Always end with exactly this hashtag: {youtube_hashtag}
 - Max 90 characters total
-- Adapt the pattern to match what the script is actually about
 
 DESCRIPTION rules:
-- Line 1: Repeat the title exactly
-- Blank line
-- 2-3 engaging intro sentences about the topic
-- Blank line
-- List with ✅ of 3-5 things viewers will learn (from the script)
-- Blank line
+- Line 1: Repeat the title
+- 2-3 engaging intro sentences
+- List with ✅ of 3-5 things viewers will learn
 - "Perfect for beginners, ESL learners, and anyone improving their English."
 - "Watch, listen, and repeat to build strong vocabulary naturally."
-- Blank line
-- SEO keywords as comma-separated list (15-20 keywords related to the topic)
-- Blank line
+- SEO keywords as comma-separated list (15-20 keywords)
 - Hashtags: #learnenglish #englishvocabulary #englishlesson #esl #spokenenglish {avatar_hashtag}
 
 === TIKTOK ===
 TITLE rules:
-- ONE line in CAPS, very punchy hook
-- Vary the pattern based on script:
-  * STOP SAYING "[X]" ❌
-  * DON'T SAY THIS IN ENGLISH ❌
-  * MOST PEOPLE SAY THIS WRONG ❌
-  * YOU'RE PRONOUNCING THIS WRONG ❌
-  * NATIVE SPEAKERS DON'T SAY "[X]" ❌
-  * LEARN THIS NOW 🔥
-- Adapt to match the script content
-- After the hook, add exactly these 5 hashtags: #learnenglish #speakenglish #englishvocab #dailyenglish {avatar_hashtag}
-- Total title must be under 120 characters
+- ONE line in CAPS, punchy hook
+- After the hook, add exactly: #learnenglish #speakenglish #englishvocab #dailyenglish {avatar_hashtag}
+- Total under 120 characters
 - Example: STOP SAYING "SUGGEST TO" ❌ #learnenglish #speakenglish #englishvocab #dailyenglish {avatar_hashtag}
 
 DESCRIPTION rules:
-- Leave completely empty. Write nothing.
+- Leave completely empty.
 
 === INSTAGRAM ===
 TITLE rules:
-- Start with an intriguing question based on the script
-- Add 1-2 relevant emojis
-- Example: "Did you know most people say this wrong? 🤔"
-- Adapt to the actual script topic
+- Intriguing question with 1-2 emojis based on script topic
 
 DESCRIPTION rules:
-- Pedagogical list of points with emoji arrows (👉) - number of points based on script content
-- Each point teaches something from the script
-- Blank line
-- End with engagement question: "Which [word/trick/expression] was new for you? 💬"
-- Blank line
-- Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + 3-4 topic-specific hashtags
+- List of points with 👉 emojis (number based on script content)
+- End with engagement question: "Which was new for you? 💬"
+- Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + topic hashtags
 
 === FACEBOOK ===
 TITLE rules:
-- Same as Instagram - intriguing question based on script
-- Add 1-2 relevant emojis
+- Same as Instagram
 
 DESCRIPTION rules:
-- Same format as Instagram
-- Pedagogical list with emoji arrows (👉)
-- Engagement question at end
-- Same hashtags as Instagram
+- Same as Instagram
+
+=== PINTEREST ===
+TITLE rules:
+- SEO-optimized title with main keyword first
+- Include how-to or number format when possible
+- Example: "5 English Travel Phrases Every Tourist Needs" or "How to Sound Natural in English"
+- Max 100 characters
+
+DESCRIPTION rules:
+- Rich SEO description (150-300 characters)
+- Include 5-8 relevant Pinterest keywords naturally in the text
+- End with a call to action: "Save this pin to learn later!"
+- Hashtags: #LearnEnglish #EnglishTips #EnglishVocabulary {avatar_hashtag} + 3 topic-specific hashtags
 
 Write everything in English.
 Only generate sections for platforms in: {platforms_str}
@@ -176,18 +171,20 @@ Respond ONLY in this exact format:
 YOUTUBE_TITLE: [title here]
 YOUTUBE_DESCRIPTION: [description here]
 TIKTOK_TITLE: [title here]
-TIKTOK_DESCRIPTION: [description here]
+TIKTOK_DESCRIPTION:
 INSTAGRAM_TITLE: [title here]
 INSTAGRAM_DESCRIPTION: [description here]
 FACEBOOK_TITLE: [title here]
 FACEBOOK_DESCRIPTION: [description here]
+PINTEREST_TITLE: [title here]
+PINTEREST_DESCRIPTION: [description here]
 
 SCRIPT:
 {script}"""
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
+        max_tokens=2500,
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -196,9 +193,13 @@ SCRIPT:
     current_key = None
     current_lines = []
 
-    keys = ["YOUTUBE_TITLE", "YOUTUBE_DESCRIPTION", "TIKTOK_TITLE",
-            "TIKTOK_DESCRIPTION", "INSTAGRAM_TITLE", "INSTAGRAM_DESCRIPTION",
-            "FACEBOOK_TITLE", "FACEBOOK_DESCRIPTION"]
+    keys = [
+        "YOUTUBE_TITLE", "YOUTUBE_DESCRIPTION",
+        "TIKTOK_TITLE", "TIKTOK_DESCRIPTION",
+        "INSTAGRAM_TITLE", "INSTAGRAM_DESCRIPTION",
+        "FACEBOOK_TITLE", "FACEBOOK_DESCRIPTION",
+        "PINTEREST_TITLE", "PINTEREST_DESCRIPTION",
+    ]
 
     for line in text.splitlines():
         matched = False
@@ -257,6 +258,7 @@ def publish_video(video_path, titre, description, avatar, platform):
         "Facebook": "facebook",
         "Instagram": "instagram",
         "TikTok": "tiktok",
+        "Pinterest": "pinterest",
     }
 
     platform_key = platform_map.get(platform)
@@ -332,7 +334,7 @@ def main():
 
         all_success = True
         for platform in plateformes:
-            platform_upper = platform.upper().replace(" ", "").replace("TIKTOK", "TIKTOK")
+            platform_upper = platform.upper()
             titre = metadata.get(f"{platform_upper}_TITLE", "")
             description = metadata.get(f"{platform_upper}_DESCRIPTION", "")
 
@@ -343,7 +345,7 @@ def main():
 
             print(f"\n  [{platform}]")
             print(f"  Title: {titre[:80]}")
-            print(f"  Description preview: {description[:100]}...")
+            print(f"  Description: {description[:100]}...")
 
             result = publish_video(video_path, titre, description, avatar, platform)
 
