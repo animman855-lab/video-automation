@@ -9,6 +9,7 @@ NOTION_TOKEN = os.environ["NOTION_TOKEN"].strip()
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 UPLOAD_POST_API_KEY = os.environ["UPLOAD_POST_API_KEY"].strip()
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
+
 EBOOK_LINK = "https://mybook.to/100EnglishMistakes"
 PINTEREST_PROFILE = "thefluentbuild"
 
@@ -278,38 +279,40 @@ def publish_video(video_path, titre, description, avatar, platform):
     print(f"  Publishing on: {platform_key}")
     url = "https://api.upload-post.com/api/upload"
 
-    # Truncate Pinterest description to 480 chars
-    pinterest_description = description
-    if pinterest_description and len(pinterest_description) > 480:
-        pinterest_description = pinterest_description[:477] + "..."
-
-    # Build data params
+    # Build data params properly separated by platform
     if platform_key == "pinterest":
         board_id = PINTEREST_BOARDS.get(avatar.lower(), "")
         if not board_id:
             print(f"  [Pinterest] No board ID for {avatar} - skipping")
             return {"success": True, "status": "skipped", "message": f"Pinterest skipped for {avatar}"}
+        
         print(f"  Pinterest Board ID: {board_id}")
-        # Add ebook link to Pinterest description
-        pinterest_desc_with_link = pinterest_description
-        if len(pinterest_desc_with_link) + len(f"\n\nLearn more: {EBOOK_LINK}") <= 480:
-            pinterest_desc_with_link += f"\n\nLearn more: {EBOOK_LINK}"
+        
+        # Truncate Pinterest description to 480 chars and append ebook link
+        pinterest_desc_with_link = description if description else ""
+        if len(pinterest_desc_with_link) > 480:
+            pinterest_desc_with_link = pinterest_desc_with_link[:477] + "..."
+            
+        link_text = f"\n\nLearn more: {EBOOK_LINK}"
+        if len(pinterest_desc_with_link) + len(link_text) <= 480:
+            pinterest_desc_with_link += link_text
+
         data_params = [
             ("user", PINTEREST_PROFILE),
             ("pinterest_title", titre),
             ("pinterest_description", pinterest_desc_with_link),
             ("platform[]", platform_key),
             ("pinterest_board_id", board_id),
+            ("pinterest_link", EBOOK_LINK),
         ]
     else:
-       data_params = [
-    ("user", PINTEREST_PROFILE),
-    ("pinterest_title", titre),
-    ("pinterest_description", pinterest_desc_with_link),
-    ("platform[]", platform_key),
-    ("pinterest_board_id", board_id),
-    ("pinterest_link", EBOOK_LINK),
-]
+        # Standard parameters for YouTube, Facebook, Instagram, TikTok
+        data_params = [
+            ("user", profile), 
+            ("title", titre),
+            ("description", description),
+            ("platform[]", platform_key),
+        ]
 
     with open(video_path, "rb") as video_file:
         response = requests.post(
@@ -318,9 +321,15 @@ def publish_video(video_path, titre, description, avatar, platform):
             data=data_params,
             files={"video": ("video.mp4", video_file, "video/mp4")},
         )
+    
     print(f"  UPLOAD STATUS {platform}: {response.status_code}")
     print(f"  UPLOAD RESPONSE {platform}: {response.text[:200]}")
-    result = response.json()
+    
+    try:
+        result = response.json()
+    except Exception:
+        result = {"success": False, "status": "failed", "message": "Invalid JSON response"}
+        
     return result
 
 
