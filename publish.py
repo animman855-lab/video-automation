@@ -10,9 +10,6 @@ NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 UPLOAD_POST_API_KEY = os.environ["UPLOAD_POST_API_KEY"].strip()
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
 
-EBOOK_LINK = "https://mybook.to/100EnglishMistakes"
-PINTEREST_PROFILE = "thefluentbuild"
-
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Content-Type": "application/json",
@@ -44,11 +41,11 @@ AVATAR_CONTEXT = {
 }
 
 PINTEREST_BOARDS = {
-    "oliviaa": "1108800439448657315",
-    "cindy": "1108800439448657317",
-    "teacherryan": "1108800439448657320",
-    "thefluentbuild": "1108800439448654918",
-    "kayla": "1108800439448657323",
+    "oliviaa": "1077764435850980486",
+    "cindy": "1053194462740201867",
+    "teacherryan": "1139481230807755359",
+    "thefluentbuild": "1108800439448654918",  # confirmed via API
+    "kayla": "1099496734139945391",
 }
 
 YOUTUBE_HASHTAGS = [
@@ -117,6 +114,9 @@ Based on the video script below, generate optimized content for these platforms:
 
 STRICT RULES PER PLATFORM:
 
+MANDATORY HASHTAGS (must appear in ALL platforms): #learnenglish #englishvocabulary #englishspeakingpractice #english
+These 4 hashtags are REQUIRED on every platform. Add topic-specific hashtags on top of these.
+
 === YOUTUBE ===
 TITLE rules:
 - Use a VARIED pattern based on script content. Examples:
@@ -134,14 +134,18 @@ DESCRIPTION rules:
 - "Perfect for beginners, ESL learners, and anyone improving their English."
 - "Watch, listen, and repeat to build strong vocabulary naturally."
 - SEO keywords as comma-separated list (15-20 keywords)
-- Hashtags: #learnenglish #englishvocabulary #englishlesson #esl #spokenenglish {avatar_hashtag}
+- MANDATORY hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english
+- Add up to 15 more topic-specific hashtags after mandatory ones
+- Include {avatar_hashtag}
+- YouTube description max 5000 characters total
 
 === TIKTOK ===
 TITLE rules:
 - ONE line in CAPS, punchy hook
-- After the hook, add exactly: #learnenglish #speakenglish #englishvocab #dailyenglish {avatar_hashtag}
-- Total under 120 characters
-- Example: STOP SAYING "SUGGEST TO" ❌ #learnenglish #speakenglish #englishvocab #dailyenglish {avatar_hashtag}
+- After the hook add MANDATORY hashtags + topic hashtags + {avatar_hashtag}
+- MANDATORY in title: #learnenglish #englishvocabulary #englishspeakingpractice #english
+- Total title under 150 characters (TikTok limit)
+- Example: STOP SAYING THIS ❌ #learnenglish #englishvocabulary #englishspeakingpractice #english {avatar_hashtag}
 
 DESCRIPTION rules:
 - Leave completely empty.
@@ -151,29 +155,43 @@ TITLE rules:
 - Intriguing question with 1-2 emojis based on script topic
 
 DESCRIPTION rules:
-- List of points with 👉 emojis (number based on script content)
-- End with engagement question: "Which was new for you? 💬"
-- Hashtags: #LearnEnglish #EnglishVocabulary #ESL #SpokenEnglish #EnglishLesson {avatar_hashtag} + topic hashtags
+- Start with 👉 then write ONE continuous engaging paragraph (2-4 sentences) about what viewers will learn
+- Skip one line
+- End with one engagement question on its own line (ex: "Which expression will you use first? 💬")
+- Skip one line
+- MANDATORY hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english
+- Add topic-specific hashtags after mandatory ones
+- Include {avatar_hashtag}
+- Instagram caption max 2200 characters total — NEVER exceed this
 
 === FACEBOOK ===
 TITLE rules:
-- Same as Instagram
+- Same as Instagram - intriguing question with 1-2 emojis
 
 DESCRIPTION rules:
-- Same as Instagram
+- Start with 👉 then write ONE continuous engaging paragraph (2-4 sentences) about what viewers will learn
+- Skip one line
+- End with one engagement question on its own line
+- Skip one line
+- MANDATORY hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english
+- Add topic-specific hashtags after mandatory ones
+- Include {avatar_hashtag}
+- Facebook post max 63206 characters — keep under 500 characters for best engagement
 
 === PINTEREST ===
 TITLE rules:
 - SEO-optimized title with main keyword first
 - Include how-to or number format when possible
-- Example: "5 English Travel Phrases Every Tourist Needs" or "How to Sound Natural in English"
 - Max 100 characters
 
 DESCRIPTION rules:
-- Rich SEO description (150-300 characters)
-- Include 5-8 relevant Pinterest keywords naturally in the text
-- End with a call to action: "Save this pin to learn later!"
-- Hashtags: #LearnEnglish #EnglishTips #EnglishVocabulary {avatar_hashtag} + 3 topic-specific hashtags
+- Rich SEO description (150-400 characters max)
+- Include keywords naturally in the text
+- End with: "Save this pin to learn later!"
+- MANDATORY hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english
+- Add 3-5 topic-specific hashtags
+- Include {avatar_hashtag}
+- Pinterest description STRICT max 480 characters total including hashtags — NEVER exceed this
 
 Write everything in English.
 Only generate sections for platforms in: {platforms_str}
@@ -279,36 +297,32 @@ def publish_video(video_path, titre, description, avatar, platform):
     print(f"  Publishing on: {platform_key}")
     url = "https://api.upload-post.com/api/upload"
 
-    # Build data params properly separated by platform
+    # Truncate Pinterest description to 480 chars
+    pinterest_description = description
+    if pinterest_description and len(pinterest_description) > 480:
+        pinterest_description = pinterest_description[:477] + "..."
+
+    # Build data params
     if platform_key == "pinterest":
         board_id = PINTEREST_BOARDS.get(avatar.lower(), "")
         if not board_id:
             print(f"  [Pinterest] No board ID for {avatar} - skipping")
             return {"success": True, "status": "skipped", "message": f"Pinterest skipped for {avatar}"}
-        
         print(f"  Pinterest Board ID: {board_id}")
-        
-        # Truncate Pinterest description to 480 chars and append ebook link
-        pinterest_desc_with_link = description if description else ""
-        if len(pinterest_desc_with_link) > 480:
-            pinterest_desc_with_link = pinterest_desc_with_link[:477] + "..."
-            
-        link_text = f"\n\nLearn more: {EBOOK_LINK}"
-        if len(pinterest_desc_with_link) + len(link_text) <= 480:
-            pinterest_desc_with_link += link_text
-
+        # Add ebook link to Pinterest description
+        pinterest_desc_with_link = pinterest_description
+        if len(pinterest_desc_with_link) + len(f"\n\nLearn more: {EBOOK_LINK}") <= 480:
+            pinterest_desc_with_link += f"\n\nLearn more: {EBOOK_LINK}"
         data_params = [
             ("user", PINTEREST_PROFILE),
             ("pinterest_title", titre),
             ("pinterest_description", pinterest_desc_with_link),
             ("platform[]", platform_key),
             ("pinterest_board_id", board_id),
-            ("pinterest_link", EBOOK_LINK),
         ]
     else:
-        # Standard parameters for YouTube, Facebook, Instagram, TikTok
         data_params = [
-            ("user", profile), 
+            ("user", profile),
             ("title", titre),
             ("description", description),
             ("platform[]", platform_key),
@@ -321,15 +335,9 @@ def publish_video(video_path, titre, description, avatar, platform):
             data=data_params,
             files={"video": ("video.mp4", video_file, "video/mp4")},
         )
-    
     print(f"  UPLOAD STATUS {platform}: {response.status_code}")
     print(f"  UPLOAD RESPONSE {platform}: {response.text[:200]}")
-    
-    try:
-        result = response.json()
-    except Exception:
-        result = {"success": False, "status": "failed", "message": "Invalid JSON response"}
-        
+    result = response.json()
     return result
 
 
