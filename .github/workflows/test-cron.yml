@@ -1,13 +1,1 @@
-name: Test Cron
 
-on:
-  schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Echo test
-        run: echo "Cron fonctionne a $(date)"
