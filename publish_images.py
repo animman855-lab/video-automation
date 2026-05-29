@@ -5,6 +5,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+import pytz
 import requests
 from PIL import Image, ImageFilter
 
@@ -20,6 +21,30 @@ PINTEREST_BOARDS = {
     "thefluentbuild": "1108800439448654918",
     "kayla": "1108800439448657323",
 }
+
+SLOT_HOURS = {
+    "08:00": 8 * 60,
+    "12:00": 12 * 60,
+    "16:00": 16 * 60,
+    "00:00": 0,
+}
+
+
+def slot_is_due(slot_name):
+    tz = pytz.timezone("America/Toronto")
+    now = datetime.now(tz)
+    current_minutes = now.hour * 60 + now.minute
+    slot_minutes = SLOT_HOURS.get(slot_name)
+
+    if slot_minutes is None:
+        return False
+
+    diff = current_minutes - slot_minutes
+
+    if slot_minutes == 0:
+        diff = current_minutes if current_minutes < 180 else -1
+
+    return 0 <= diff <= 480
 
 
 def get_text(prop):
@@ -48,7 +73,9 @@ def notion_headers():
 
 
 def get_images_to_publish(target_date=None):
-    today = target_date or datetime.now().date().isoformat()
+    tz = pytz.timezone("America/Toronto")
+    today = target_date or datetime.now(tz).strftime("%Y-%m-%d")
+
     payload = {
         "filter": {
             "and": [
@@ -113,6 +140,7 @@ def make_tiktok_image(source_path):
 
     fg_w = target_w
     fg_h = int(source.height * (fg_w / source.width))
+
     if fg_h > target_h:
         fg_h = target_h
         fg_w = int(source.width * (fg_h / source.height))
@@ -179,6 +207,7 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
             return False
 
         result = response.json()
+
         if result.get("success") is False:
             print(f"{platform} failed: {result}")
             return False
@@ -213,12 +242,14 @@ def publish_to_upload_post(image_path, avatar, caption, platforms):
 
 def mark_as_published(page_id):
     payload = {"properties": {"Statut": {"select": {"name": "Publie"}}}}
+
     response = requests.patch(
         f"https://api.notion.com/v1/pages/{page_id}",
         headers=notion_headers(),
         json=payload,
         timeout=30,
     )
+
     response.raise_for_status()
 
 
@@ -231,6 +262,7 @@ def main():
 
     required = ["NOTION_TOKEN", "NOTION_IMAGE_DATABASE_ID", "UPLOAD_POST_API_KEY"]
     missing = [name for name in required if not os.getenv(name)]
+
     if missing:
         raise SystemExit(f"Missing environment variables: {', '.join(missing)}")
 
@@ -250,7 +282,18 @@ def main():
         avatar = prop_text(props, "Avatar")
         caption = prop_text(props, "Caption")
         image_url = prop_text(props, "Image File")
+        slot = prop_text(props, "Slot")
         platforms = get_multi_select(props.get("Plateforme", {}))
+
+        print(f"\n--- {avatar} | Slot: {slot} | Platforms: {platforms} ---")
+
+        if not slot_is_due(slot):
+            print(f"Slot {slot} not due yet - skipping.")
+            continue
+
+        if not image_url:
+            print("No image link - skipping.")
+            continue
 
         image_path = download_image(image_url)
 
