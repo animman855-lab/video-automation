@@ -66,7 +66,7 @@ def get_multi_select(prop):
 
 def notion_headers():
     return {
-        "Authorization": f"Bearer {os.environ['NOTION_TOKEN']}",
+        "Authorization": f"Bearer {os.environ['NOTION_TOKEN'].strip()}",
         "Notion-Version": "2022-06-28",
         "Content-Type": "application/json",
     }
@@ -85,7 +85,9 @@ def get_images_to_publish(target_date=None):
         }
     }
 
-    url = f"https://api.notion.com/v1/databases/{os.environ['NOTION_IMAGE_DATABASE_ID']}/query"
+    database_id = os.environ["NOTION_IMAGE_DATABASE_ID"].strip()
+    url = f"https://api.notion.com/v1/databases/{database_id}/query"
+
     response = requests.post(url, headers=notion_headers(), json=payload, timeout=30)
     response.raise_for_status()
     return response.json().get("results", [])
@@ -112,9 +114,11 @@ def download_image(image_url):
     response.raise_for_status()
 
     suffix = ".png" if "png" in response.headers.get("content-type", "") else ".jpg"
+
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp.write(response.content)
     tmp.close()
+
     return Path(tmp.name)
 
 
@@ -134,6 +138,7 @@ def make_tiktok_image(source_path):
         new_h = int(new_w / source_ratio)
 
     bg = bg.resize((new_w, new_h), Image.LANCZOS)
+
     left = (new_w - target_w) // 2
     top = (new_h - target_h) // 2
     bg = bg.crop((left, top, left + target_w, top + target_h)).filter(ImageFilter.GaussianBlur(28))
@@ -177,6 +182,7 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
                 "pinterest_board_id": board_id,
                 "link": EBOOK_LINK,
             }
+
         else:
             data = {
                 "user": avatar,
@@ -196,7 +202,7 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
 
         response = requests.post(
             UPLOAD_POST_PHOTO_ENDPOINT,
-            headers={"Authorization": f"Apikey {os.environ['UPLOAD_POST_API_KEY']}"},
+            headers={"Authorization": f"Apikey {os.environ['UPLOAD_POST_API_KEY'].strip()}"},
             data=data,
             files=files,
             timeout=120,
@@ -233,6 +239,7 @@ def publish_to_upload_post(image_path, avatar, caption, platforms):
         try:
             if not upload_photo_to_platform(upload_path, avatar, caption, platform):
                 all_success = False
+
         finally:
             if tiktok_path:
                 tiktok_path.unlink(missing_ok=True)
@@ -303,6 +310,7 @@ def main():
                 print(f"Marked as Publie: {page['id']}")
             else:
                 print(f"Keeping A publier: {page['id']}")
+
         finally:
             image_path.unlink(missing_ok=True)
 
