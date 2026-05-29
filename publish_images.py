@@ -184,15 +184,17 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
             }
 
         else:
+            title_text = caption if normalized == "facebook" else caption.splitlines()[0][:100]
+
             data = {
                 "user": avatar,
                 "platform[]": normalized,
-                "title": caption.splitlines()[0][:100],
+                "title": title_text,
                 "description": caption,
             }
 
             if normalized == "facebook":
-                data["facebook_title"] = caption.splitlines()[0][:100]
+                data["facebook_title"] = caption
                 data["facebook_description"] = caption
 
             if normalized == "tiktok":
@@ -216,6 +218,11 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
 
         if result.get("success") is False:
             print(f"{platform} failed: {result}")
+            return False
+
+        platform_result = result.get("results", {}).get(normalized)
+        if isinstance(platform_result, dict) and platform_result.get("success") is False:
+            print(f"{platform} failed: {platform_result}")
             return False
 
         print(f"{platform} success: {result}")
