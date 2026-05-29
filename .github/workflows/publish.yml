@@ -10,7 +10,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repo
@@ -27,10 +27,17 @@ jobs:
       - name: Afficher heure serveur
         run: date
 
-      - name: Lancer le script de publication
+      - name: Lancer le script de publication video
         env:
           NOTION_TOKEN:        ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID:  ${{ secrets.NOTION_DATABASE_ID }}
           UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
         run: python publish.py
+
+      - name: Lancer le script de publication image
+        env:
+          NOTION_TOKEN:             ${{ secrets.NOTION_TOKEN }}
+          NOTION_IMAGE_DATABASE_ID: ${{ secrets.NOTION_IMAGE_DATABASE_ID }}
+          UPLOAD_POST_API_KEY:      ${{ secrets.UPLOAD_POST_API_KEY }}
+        run: python publish_images.py
