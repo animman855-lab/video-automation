@@ -29,6 +29,8 @@ SLOT_HOURS = {
     "00:00": 0,
 }
 
+SLOT_WINDOW_MINUTES = 90
+
 
 def slot_is_due(slot_name):
     tz = pytz.timezone("America/Toronto")
@@ -44,7 +46,7 @@ def slot_is_due(slot_name):
     if slot_minutes == 0:
         diff = current_minutes if current_minutes < 180 else -1
 
-    return 0 <= diff <= 480
+    return 0 <= diff <= SLOT_WINDOW_MINUTES
 
 
 def get_text(prop):
@@ -114,7 +116,6 @@ def download_image(image_url):
     response.raise_for_status()
 
     suffix = ".png" if "png" in response.headers.get("content-type", "") else ".jpg"
-
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp.write(response.content)
     tmp.close()
@@ -138,7 +139,6 @@ def make_tiktok_image(source_path):
         new_h = int(new_w / source_ratio)
 
     bg = bg.resize((new_w, new_h), Image.LANCZOS)
-
     left = (new_w - target_w) // 2
     top = (new_h - target_h) // 2
     bg = bg.crop((left, top, left + target_w, top + target_h)).filter(ImageFilter.GaussianBlur(28))
