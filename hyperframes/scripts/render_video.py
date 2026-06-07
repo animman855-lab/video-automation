@@ -9,11 +9,12 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 
-ANIMALS = ["lion", "tiger", "elephant", "giraffe", "zebra", "monkey", "bear", "rabbit", "horse", "dog"]
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
-DURATION = 20
+SECONDS_PER_ANIMAL = 2.0
+CTA_SECONDS = 4.0
+MAX_DURATION = 30.0
 
 
 def _drive_download_url(url: str) -> str:
@@ -59,26 +60,46 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def _arrow_target(index: int) -> tuple[int, int]:
-    col = index % 2
-    row = index // 2
-    x = 315 if col == 0 else 765
-    y = 350 + row * 245
-    return x, y
+def _draw_current_word(draw: ImageDraw.ImageDraw, word: str, pulse: float) -> None:
+    font = _font(72)
+    label = word.upper()
+    bbox = draw.textbbox((0, 0), label, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    padding_x = 44
+    padding_y = 24
+    box_w = text_w + padding_x * 2
+    box_h = text_h + padding_y * 2
+    x1 = (WIDTH - box_w) // 2
+    y1 = 54
+    x2 = x1 + box_w
+    y2 = y1 + box_h
+    outline_width = 6 + int(math.sin(pulse * math.pi * 2) * 2)
+
+    draw.rounded_rectangle(
+        (x1, y1, x2, y2),
+        radius=28,
+        fill=(255, 255, 255),
+        outline=(28, 180, 85),
+        width=outline_width,
+    )
+    draw.text((x1 + padding_x, y1 + padding_y - 7), label, fill=(10, 10, 10), font=font)
 
 
 def _draw_arrow(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float) -> None:
     tx, ty = target
-    start_x = tx - 190
-    start_y = ty - 95
-    offset = int(math.sin(pulse * math.pi * 2) * 8)
-    start = (start_x + offset, start_y)
-    end = (tx - 35 + offset, ty - 25)
-    color = (33, 201, 91)
+    offset = int(math.sin(pulse * math.pi * 2) * 7)
+    if tx < WIDTH // 2:
+        start = (tx - 180 + offset, ty - 115)
+    else:
+        start = (tx + 180 - offset, ty - 115)
+    end = (tx, ty)
+    color = (22, 196, 79)
     width = 18
+
     draw.line([start, end], fill=color, width=width)
     angle = math.atan2(end[1] - start[1], end[0] - start[0])
-    head_len = 44
+    head_len = 48
     left = (
         end[0] - head_len * math.cos(angle - math.pi / 6),
         end[1] - head_len * math.sin(angle - math.pi / 6),
@@ -103,23 +124,36 @@ def _draw_cta(draw: ImageDraw.ImageDraw) -> None:
         y += 62
 
 
-def render_teacher_ryan_video(image_path: Path, audio_path: Path, output_path: Path, frames_dir: Path) -> Path:
+def render_teacher_ryan_video(
+    image_path: Path,
+    audio_path: Path,
+    output_path: Path,
+    frames_dir: Path,
+    items: list[str],
+    item_targets: dict[str, tuple[int, int]],
+) -> Path:
     import imageio_ffmpeg
+
+    if not items:
+        raise ValueError("Cannot render without vocabulary items.")
 
     frames_dir.mkdir(parents=True, exist_ok=True)
     base = _cover_image(image_path)
-    total_frames = FPS * DURATION
-    item_frames = int(1.7 * FPS)
+    item_duration = min(SECONDS_PER_ANIMAL * len(items), MAX_DURATION - CTA_SECONDS)
+    duration = item_duration + CTA_SECONDS
+    total_frames = int(FPS * duration)
 
     for frame_index in range(total_frames):
         seconds = frame_index / FPS
         frame = base.copy()
         draw = ImageDraw.Draw(frame)
 
-        if seconds < 17:
-            animal_index = min(frame_index // item_frames, len(ANIMALS) - 1)
+        if seconds < item_duration:
+            animal_index = min(int(seconds // SECONDS_PER_ANIMAL), len(items) - 1)
+            animal = items[animal_index]
             pulse = (frame_index % FPS) / FPS
-            _draw_arrow(draw, _arrow_target(animal_index), pulse)
+            _draw_arrow(draw, item_targets[animal], pulse)
+            _draw_current_word(draw, animal, pulse)
         else:
             _draw_cta(draw)
 
@@ -136,14 +170,13 @@ def render_teacher_ryan_video(image_path: Path, audio_path: Path, output_path: P
         "-i",
         str(audio_path),
         "-t",
-        str(DURATION),
+        f"{duration:.2f}",
         "-c:v",
         "libx264",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
         "aac",
-        "-shortest",
         str(output_path),
     ]
     subprocess.run(cmd, check=True)
