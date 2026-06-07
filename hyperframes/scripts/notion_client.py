@@ -93,6 +93,16 @@ def set_ready_to_publish(page_id: str, drive_url: str) -> dict:
     )
 
 
+def set_preview_video_link(page_id: str, drive_url: str) -> dict:
+    return patch_page(
+        page_id,
+        {
+            "Lien Video": {"url": drive_url},
+            "Statut": {"select": {"name": "En cours"}},
+        },
+    )
+
+
 def prop_text(props: dict, name: str) -> str:
     prop = props.get(name)
     if not prop:
