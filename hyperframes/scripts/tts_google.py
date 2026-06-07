@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import os
 from pathlib import Path
+import re
 
 import requests
 
@@ -32,11 +34,62 @@ def _access_token() -> str:
     return credentials.token
 
 
-def synthesize_words(words: list[str], output_path: Path) -> Path:
+def _safe_audio_name(index: int, word: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", word.lower()).strip("-")
+    if not slug:
+        slug = "item"
+    return f"{index:02d}_{slug}.mp3"
+
+
+def synthesize_item_audios(words: list[str], output_dir: Path) -> dict[str, Path]:
     if not words:
         raise RuntimeError("Refusing to synthesize an empty word list.")
 
-    ssml = "<speak>" + '<break time="900ms"/>'.join(words) + '<break time="1200ms"/></speak>'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    token = _access_token()
+    audio_paths: dict[str, Path] = {}
+
+    for index, word in enumerate(words, start=1):
+        output_path = output_dir / _safe_audio_name(index, word)
+        ssml = f"<speak><prosody rate=\"slow\">{html.escape(word)}</prosody></speak>"
+        response = requests.post(
+            "https://texttospeech.googleapis.com/v1/text:synthesize",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "input": {"ssml": ssml},
+                "voice": {"languageCode": "en-US", "name": "en-US-Neural2-D"},
+                "audioConfig": {"audioEncoding": "MP3", "speakingRate": 0.78},
+            },
+            timeout=60,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"Google TTS failed for '{word}': {response.status_code} {response.text}")
+
+        audio_content = response.json().get("audioContent")
+        if not audio_content:
+            raise RuntimeError(f"Google TTS returned empty audio for '{word}'.")
+
+        output_path.write_bytes(base64.b64decode(audio_content))
+        if output_path.stat().st_size <= 0:
+            raise RuntimeError(f"Google TTS wrote an empty audio file for '{word}'.")
+        audio_paths[word] = output_path
+
+    return audio_paths
+
+
+def synthesize_words(words: list[str], output_path: Path) -> Path:
+    """Backward-compatible helper kept for older manual calls.
+
+    The HyperFrames pipeline now uses synthesize_item_audios() so each item can
+    be synchronized with its own arrow and on-screen label.
+    """
+    if not words:
+        raise RuntimeError("Refusing to synthesize an empty word list.")
+
+    ssml = "<speak>" + '<break time="900ms"/>'.join(html.escape(word) for word in words) + '<break time="1200ms"/></speak>'
     response = requests.post(
         "https://texttospeech.googleapis.com/v1/text:synthesize",
         headers={
