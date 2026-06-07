@@ -88,17 +88,8 @@ def set_ready_to_publish(page_id: str, drive_url: str) -> dict:
         page_id,
         {
             "Lien Video": {"url": drive_url},
+            "Plateforme": {"multi_select": [{"name": "Facebook"}]},
             "Statut": {"select": {"name": "A publier"}},
-        },
-    )
-
-
-def set_preview_video_link(page_id: str, drive_url: str) -> dict:
-    return patch_page(
-        page_id,
-        {
-            "Lien Video": {"url": drive_url},
-            "Statut": {"select": {"name": "En cours"}},
         },
     )
 
