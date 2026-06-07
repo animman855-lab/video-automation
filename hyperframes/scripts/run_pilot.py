@@ -7,18 +7,21 @@ import tempfile
 from pathlib import Path
 
 from drive_client import check_drive_secrets, upload_video_make_public
+from image_analyzer import analyze_vocabulary_grid
 from notion_client import load_local_env, prop_text, query_teacher_ryan_animals_pilot, set_ready_to_publish
-from render_video import ANIMALS, download_image, render_teacher_ryan_video
+from render_video import download_image, render_teacher_ryan_video
 from safety import (
     PilotLimits,
     SafetyError,
     require_at_most_one_row,
     require_empty,
     require_file_created,
+    require_item_budget,
     require_non_empty,
     require_single_row,
     require_tts_budget,
 )
+from script_parser import parse_vocabulary_items
 from tts_google import check_tts_secrets, synthesize_words
 
 
@@ -32,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_and_validate(dry_run: bool) -> tuple[dict, dict, int]:
+def _load_and_validate(dry_run: bool) -> tuple[dict, dict, list[str], int]:
     limits = PilotLimits()
     rows = query_teacher_ryan_animals_pilot()
     page = require_single_row(rows, limits) if dry_run else require_at_most_one_row(rows)
@@ -54,11 +57,13 @@ def _load_and_validate(dry_run: bool) -> tuple[dict, dict, int]:
     require_empty(video_url, "Lien Video")
     require_non_empty(script, "Script")
     require_non_empty(prompt_1, "Prompt 1")
+    items = parse_vocabulary_items(script)
+    require_item_budget(items, limits)
     tts_chars = require_tts_budget(script, limits)
-    return page, props, tts_chars
+    return page, props, items, tts_chars
 
 
-def _print_summary(page: dict, props: dict, tts_chars: int) -> None:
+def _print_summary(page: dict, props: dict, items: list[str], tts_chars: int) -> None:
     limits = PilotLimits()
     print("Matched Notion row:")
     print(f"- page_id: {page.get('id')}")
@@ -70,11 +75,12 @@ def _print_summary(page: dict, props: dict, tts_chars: int) -> None:
     print(f"- status: {prop_text(props, 'Statut')}")
     print(f"- image_hyperframes_present: {bool(prop_text(props, 'Image HyperFrames'))}")
     print(f"- lien_video_empty: {not bool(prop_text(props, 'Lien Video'))}")
+    print(f"- items_from_script: {len(items)} ({', '.join(items)})")
     print(f"- script_chars_for_tts: {tts_chars}/{limits.max_tts_chars}")
 
 
 def dry_run() -> int:
-    page, props, tts_chars = _load_and_validate(dry_run=True)
+    page, props, items, tts_chars = _load_and_validate(dry_run=True)
     missing_drive = check_drive_secrets()
     missing_tts = check_tts_secrets()
 
@@ -83,7 +89,7 @@ def dry_run() -> int:
     print("No Notion update will be made.")
     print("No audio, video, Drive upload, or Upload-Post publication will run.")
     print("")
-    _print_summary(page, props, tts_chars)
+    _print_summary(page, props, items, tts_chars)
     print("")
     print("Would do later, in real mode:")
     print("- download/read the Flow image from Image HyperFrames")
@@ -101,18 +107,25 @@ def dry_run() -> int:
 
 
 def execute() -> int:
-    page, props, tts_chars = _load_and_validate(dry_run=False)
-    _print_summary(page, props, tts_chars)
+    page, props, items, tts_chars = _load_and_validate(dry_run=False)
+    _print_summary(page, props, items, tts_chars)
 
     work_dir = Path(tempfile.mkdtemp(prefix="hyperframes_teacherryan_"))
     try:
         image_path = download_image(prop_text(props, "Image HyperFrames"), work_dir / "source_image")
-        audio_path = synthesize_words(ANIMALS, work_dir / "teacherryan-animals.mp3")
+        analysis = analyze_vocabulary_grid(image_path, items)
+        print(
+            "Image grid detected. "
+            f"cells={analysis.cells_found} vertical={analysis.vertical_lines} horizontal={analysis.horizontal_lines}"
+        )
+        audio_path = synthesize_words(items, work_dir / "teacherryan-vocabulary.mp3")
         video_path = render_teacher_ryan_video(
             image_path=image_path,
             audio_path=audio_path,
             output_path=work_dir / "teacherryan-hyperframes-animals-2026-06-07.mp4",
             frames_dir=work_dir / "frames",
+            items=items,
+            item_targets=analysis.targets,
         )
 
         require_file_created(str(audio_path), "TTS audio")
