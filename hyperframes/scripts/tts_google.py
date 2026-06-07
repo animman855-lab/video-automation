@@ -33,10 +33,10 @@ def _access_token() -> str:
 
 
 def synthesize_words(words: list[str], output_path: Path) -> Path:
-    if len(words) > 10:
-        raise RuntimeError("Refusing to synthesize more than 10 audio words.")
+    if not words:
+        raise RuntimeError("Refusing to synthesize an empty word list.")
 
-    ssml = "<speak>" + '<break time="350ms"/>'.join(words) + "</speak>"
+    ssml = "<speak>" + '<break time="900ms"/>'.join(words) + '<break time="1200ms"/></speak>'
     response = requests.post(
         "https://texttospeech.googleapis.com/v1/text:synthesize",
         headers={
@@ -46,7 +46,7 @@ def synthesize_words(words: list[str], output_path: Path) -> Path:
         json={
             "input": {"ssml": ssml},
             "voice": {"languageCode": "en-US", "name": "en-US-Neural2-D"},
-            "audioConfig": {"audioEncoding": "MP3", "speakingRate": 0.92},
+            "audioConfig": {"audioEncoding": "MP3", "speakingRate": 0.78},
         },
         timeout=60,
     )
