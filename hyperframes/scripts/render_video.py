@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import math
+import re
+import subprocess
+from pathlib import Path
+
+import requests
+from PIL import Image, ImageDraw, ImageFont
+
+
+ANIMALS = ["lion", "tiger", "elephant", "giraffe", "zebra", "monkey", "bear", "rabbit", "horse", "dog"]
+WIDTH = 1080
+HEIGHT = 1920
+FPS = 30
+DURATION = 20
+
+
+def _drive_download_url(url: str) -> str:
+    for pattern in [r"/file/d/([^/]+)", r"[?&]id=([^&]+)"]:
+        match = re.search(pattern, url)
+        if match:
+            return f"https://drive.google.com/uc?export=download&id={match.group(1)}"
+    return url
+
+
+def download_image(image_url: str, output_path: Path) -> Path:
+    response = requests.get(_drive_download_url(image_url), timeout=90)
+    response.raise_for_status()
+    output_path.write_bytes(response.content)
+    return output_path
+
+
+def _cover_image(image_path: Path) -> Image.Image:
+    source = Image.open(image_path).convert("RGB")
+    src_ratio = source.width / source.height
+    target_ratio = WIDTH / HEIGHT
+    if src_ratio > target_ratio:
+        new_h = HEIGHT
+        new_w = int(new_h * src_ratio)
+    else:
+        new_w = WIDTH
+        new_h = int(new_w / src_ratio)
+    resized = source.resize((new_w, new_h), Image.LANCZOS)
+    left = (new_w - WIDTH) // 2
+    top = (new_h - HEIGHT) // 2
+    return resized.crop((left, top, left + WIDTH, top + HEIGHT))
+
+
+def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for candidate in [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/Arial.ttf",
+    ]:
+        path = Path(candidate)
+        if path.exists():
+            return ImageFont.truetype(str(path), size=size)
+    return ImageFont.load_default()
+
+
+def _arrow_target(index: int) -> tuple[int, int]:
+    col = index % 2
+    row = index // 2
+    x = 315 if col == 0 else 765
+    y = 350 + row * 245
+    return x, y
+
+
+def _draw_arrow(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float) -> None:
+    tx, ty = target
+    start_x = tx - 190
+    start_y = ty - 95
+    offset = int(math.sin(pulse * math.pi * 2) * 8)
+    start = (start_x + offset, start_y)
+    end = (tx - 35 + offset, ty - 25)
+    color = (33, 201, 91)
+    width = 18
+    draw.line([start, end], fill=color, width=width)
+    angle = math.atan2(end[1] - start[1], end[0] - start[0])
+    head_len = 44
+    left = (
+        end[0] - head_len * math.cos(angle - math.pi / 6),
+        end[1] - head_len * math.sin(angle - math.pi / 6),
+    )
+    right = (
+        end[0] - head_len * math.cos(angle + math.pi / 6),
+        end[1] - head_len * math.sin(angle + math.pi / 6),
+    )
+    draw.polygon([end, left, right], fill=color)
+
+
+def _draw_cta(draw: ImageDraw.ImageDraw) -> None:
+    text = "Follow TeacherRyan for more English vocabulary."
+    font = _font(52)
+    box = (90, 1420, 990, 1625)
+    draw.rounded_rectangle(box, radius=30, fill=(255, 255, 255), outline=(30, 30, 30), width=3)
+    lines = ["Follow TeacherRyan", "for more English vocabulary."]
+    y = 1460
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y), line, fill=(10, 10, 10), font=font)
+        y += 62
+
+
+def render_teacher_ryan_video(image_path: Path, audio_path: Path, output_path: Path, frames_dir: Path) -> Path:
+    import imageio_ffmpeg
+
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    base = _cover_image(image_path)
+    total_frames = FPS * DURATION
+    item_frames = int(1.7 * FPS)
+
+    for frame_index in range(total_frames):
+        seconds = frame_index / FPS
+        frame = base.copy()
+        draw = ImageDraw.Draw(frame)
+
+        if seconds < 17:
+            animal_index = min(frame_index // item_frames, len(ANIMALS) - 1)
+            pulse = (frame_index % FPS) / FPS
+            _draw_arrow(draw, _arrow_target(animal_index), pulse)
+        else:
+            _draw_cta(draw)
+
+        frame.save(frames_dir / f"frame_{frame_index:04d}.jpg", "JPEG", quality=92)
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-framerate",
+        str(FPS),
+        "-i",
+        str(frames_dir / "frame_%04d.jpg"),
+        "-i",
+        str(audio_path),
+        "-t",
+        str(DURATION),
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-shortest",
+        str(output_path),
+    ]
+    subprocess.run(cmd, check=True)
+    return output_path
