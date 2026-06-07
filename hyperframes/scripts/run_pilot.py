@@ -139,7 +139,7 @@ def execute() -> int:
         drive_url = upload_video_make_public(video_path, "teacherryan-hyperframes-animals-2026-06-07.mp4")
         require_non_empty(drive_url, "Google Drive public URL")
         set_ready_to_publish(page["id"], drive_url)
-        print("HyperFrames pilot completed. Notion set to Facebook only and A publier.")
+        print("HyperFrames pilot completed. Notion Lien Video filled and Statut set to A publier.")
         print(f"Drive URL: {drive_url}")
         return 0
     finally:
