@@ -27,7 +27,7 @@ from safety import (
     require_tts_budget,
 )
 from script_parser import parse_vocabulary_items
-from tts_google import check_tts_secrets, synthesize_words
+from tts_google import check_tts_secrets, synthesize_item_audios
 
 
 def repo_root() -> Path:
@@ -123,17 +123,19 @@ def execute() -> int:
             "Image grid detected. "
             f"cells={analysis.cells_found} vertical={analysis.vertical_lines} horizontal={analysis.horizontal_lines}"
         )
-        audio_path = synthesize_words(items, work_dir / "teacherryan-vocabulary.mp3")
+        item_audio_paths = synthesize_item_audios(items, work_dir / "item_audio")
+        for item in items:
+            require_file_created(str(item_audio_paths[item]), f"TTS audio for {item}")
+
         video_path = render_teacher_ryan_video(
             image_path=image_path,
-            audio_path=audio_path,
+            item_audio_paths=item_audio_paths,
             output_path=work_dir / "teacherryan-hyperframes-animals-2026-06-07.mp4",
             frames_dir=work_dir / "frames",
             items=items,
             item_targets=analysis.targets,
         )
 
-        require_file_created(str(audio_path), "TTS audio")
         require_file_created(str(video_path), "HyperFrames video")
 
         drive_url = upload_video_make_public(video_path, "teacherryan-hyperframes-animals-2026-06-07.mp4")
