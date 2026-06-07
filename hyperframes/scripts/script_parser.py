@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import re
+
+
+class ScriptParseError(RuntimeError):
+    pass
+
+
+IGNORE_PREFIXES = (
+    "green arrow",
+    "voice says",
+    "cta",
+    "follow ",
+)
+
+
+def parse_vocabulary_items(script: str) -> list[str]:
+    """Extract spoken vocabulary items from the Notion Script field.
+
+    The first comma-separated vocabulary line is treated as the source of truth.
+    Instruction lines such as CTA or arrow notes are ignored.
+    """
+
+    candidates = []
+    for raw_line in script.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if lower.startswith(IGNORE_PREFIXES):
+            continue
+        if "," in line:
+            candidates.append(line)
+
+    if not candidates:
+        raise ScriptParseError("No comma-separated vocabulary line found in Script.")
+
+    source = candidates[0].strip().rstrip(".")
+    items = []
+    for part in source.split(","):
+        item = re.sub(r"[^A-Za-z -]+", "", part).strip().lower()
+        item = re.sub(r"\s+", " ", item)
+        if item:
+            items.append(item)
+
+    if not items:
+        raise ScriptParseError("Script vocabulary line did not contain usable items.")
+
+    if len(set(items)) != len(items):
+        raise ScriptParseError(f"Duplicate vocabulary items found: {items}")
+
+    return items
