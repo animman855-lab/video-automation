@@ -12,9 +12,8 @@ from PIL import Image, ImageDraw, ImageFont
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
-SECONDS_PER_ANIMAL = 2.0
+SECONDS_PER_ITEM = 2.25
 CTA_SECONDS = 4.0
-MAX_DURATION = 30.0
 
 
 def _drive_download_url(url: str) -> str:
@@ -139,7 +138,7 @@ def render_teacher_ryan_video(
 
     frames_dir.mkdir(parents=True, exist_ok=True)
     base = _cover_image(image_path)
-    item_duration = min(SECONDS_PER_ANIMAL * len(items), MAX_DURATION - CTA_SECONDS)
+    item_duration = SECONDS_PER_ITEM * len(items)
     duration = item_duration + CTA_SECONDS
     total_frames = int(FPS * duration)
 
@@ -149,7 +148,7 @@ def render_teacher_ryan_video(
         draw = ImageDraw.Draw(frame)
 
         if seconds < item_duration:
-            animal_index = min(int(seconds // SECONDS_PER_ANIMAL), len(items) - 1)
+            animal_index = min(int(seconds // SECONDS_PER_ITEM), len(items) - 1)
             animal = items[animal_index]
             pulse = (frame_index % FPS) / FPS
             _draw_arrow(draw, item_targets[animal], pulse)
