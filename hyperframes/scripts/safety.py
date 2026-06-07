@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 
 class SafetyError(RuntimeError):
@@ -12,7 +13,7 @@ class PilotLimits:
     max_rows: int = 1
     max_tts_chars: int = 300
     max_images: int = 0
-    max_audio_files: int = 10
+    max_audio_files: int = int(os.getenv("HYPERFRAMES_MAX_ITEMS", "20"))
     max_videos: int = 1
 
 
@@ -47,6 +48,13 @@ def require_tts_budget(text: str, limits: PilotLimits) -> int:
     if count > limits.max_tts_chars:
         raise SafetyError(f"TTS text is {count} chars; limit is {limits.max_tts_chars}.")
     return count
+
+
+def require_item_budget(items: list[str], limits: PilotLimits) -> None:
+    if not items:
+        raise SafetyError("No vocabulary items found.")
+    if len(items) > limits.max_audio_files:
+        raise SafetyError(f"Found {len(items)} items; limit is {limits.max_audio_files}.")
 
 
 def require_file_created(path: str, label: str) -> None:
