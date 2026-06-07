@@ -12,7 +12,6 @@ from notion_client import (
     load_local_env,
     prop_text,
     query_teacher_ryan_animals_pilot,
-    set_preview_video_link,
     set_ready_to_publish,
 )
 from render_video import download_image, render_teacher_ryan_video
@@ -38,11 +37,6 @@ def repo_root() -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="HyperFrames TeacherRyan animals pilot.")
     parser.add_argument("--execute", action="store_true", help="Run real generation/upload/update.")
-    parser.add_argument(
-        "--execute-preview",
-        action="store_true",
-        help="Generate/upload and write Lien Video, but keep Statut = En cours.",
-    )
     return parser.parse_args()
 
 
@@ -117,7 +111,7 @@ def dry_run() -> int:
     return 0
 
 
-def execute(preview: bool = False) -> int:
+def execute() -> int:
     page, props, items, tts_chars = _load_and_validate(dry_run=False)
     _print_summary(page, props, items, tts_chars)
 
@@ -144,12 +138,8 @@ def execute(preview: bool = False) -> int:
 
         drive_url = upload_video_make_public(video_path, "teacherryan-hyperframes-animals-2026-06-07.mp4")
         require_non_empty(drive_url, "Google Drive public URL")
-        if preview:
-            set_preview_video_link(page["id"], drive_url)
-            print("HyperFrames preview completed. Notion Lien Video filled; Statut kept En cours.")
-        else:
-            set_ready_to_publish(page["id"], drive_url)
-            print("HyperFrames pilot completed and Notion set to A publier.")
+        set_ready_to_publish(page["id"], drive_url)
+        print("HyperFrames pilot completed. Notion set to Facebook only and A publier.")
         print(f"Drive URL: {drive_url}")
         return 0
     finally:
@@ -158,14 +148,10 @@ def execute(preview: bool = False) -> int:
 
 def main() -> int:
     args = parse_args()
-    if args.execute and args.execute_preview:
-        raise SafetyError("Use either --execute or --execute-preview, not both.")
     root = repo_root()
     load_local_env(root)
-    if args.execute_preview:
-        return execute(preview=True)
     if args.execute:
-        return execute(preview=False)
+        return execute()
     return dry_run()
 
 
