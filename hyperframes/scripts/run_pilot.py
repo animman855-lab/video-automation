@@ -30,7 +30,7 @@ from safety import (
     require_tts_budget,
 )
 from script_parser import parse_vocabulary_items
-from tts_google import check_tts_secrets, synthesize_item_audios
+from tts_google import check_tts_secrets, synthesize_dialogue_audios, synthesize_item_audios
 
 
 SLOT_HOURS = {
@@ -190,11 +190,22 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
 
     dialogue = parse_dialogue_script(script)
     image_path = download_image(image_url, work_dir / "source_image")
+    line_audio_paths, cta_audio_path = synthesize_dialogue_audios(
+        dialogue.lines,
+        dialogue.cta,
+        work_dir / "dialogue_audio",
+    )
+    for index, audio_path in enumerate(line_audio_paths, start=1):
+        require_file_created(str(audio_path), f"TTS audio for Oliviaa line {index}")
+    require_file_created(str(cta_audio_path), "TTS audio for Oliviaa CTA")
+
     video_path = render_oliviaa_drama_video(
         image_path=image_path,
         output_path=work_dir / _output_name(row),
         frames_dir=work_dir / "frames",
         dialogue=dialogue,
+        line_audio_paths=line_audio_paths,
+        cta_audio_path=cta_audio_path,
     )
     require_file_created(str(video_path), "Oliviaa HyperFrames video")
     return video_path
