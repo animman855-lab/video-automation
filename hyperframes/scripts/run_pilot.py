@@ -19,6 +19,7 @@ from notion_client import (
     set_ready_to_publish,
 )
 from render_oliviaa_drama import render_oliviaa_drama_video
+from render_thefluentbuild_grandma import render_thefluentbuild_grandma_video
 from render_video import download_image, render_teacher_ryan_video
 from safety import (
     PilotLimits,
@@ -29,7 +30,12 @@ from safety import (
     require_tts_budget,
 )
 from script_parser import parse_vocabulary_items
-from tts_google import check_tts_secrets, synthesize_dialogue_audios, synthesize_item_audios
+from tts_google import (
+    check_tts_secrets,
+    synthesize_dialogue_audios,
+    synthesize_item_audios,
+    synthesize_thefluentbuild_audios,
+)
 
 
 SLOT_HOURS = {
@@ -37,7 +43,7 @@ SLOT_HOURS = {
     "16:00": 16 * 60,
     "00:00": 0,
 }
-SUPPORTED_AVATARS = {"teacherryan", "oliviaa"}
+SUPPORTED_AVATARS = {"teacherryan", "oliviaa", "thefluentbuild"}
 TEACHERRYAN_FIXED_TARGETS = [
     (300, 420),
     (780, 420),
@@ -228,12 +234,47 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
     return video_path
 
 
+def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
+    props = row.get("properties", {})
+    script = prop_text(props, "Script")
+    image_url = prop_text(props, "Image HyperFrames")
+    prompt_1 = prop_text(props, "Prompt 1")
+
+    require_non_empty(image_url, "Image HyperFrames")
+    require_non_empty(script, "Script")
+    require_non_empty(prompt_1, "Prompt 1")
+
+    dialogue = parse_dialogue_script(script)
+    image_path = download_image(image_url, work_dir / "source_image")
+    line_audio_paths, cta_audio_path = synthesize_thefluentbuild_audios(
+        dialogue.lines,
+        dialogue.cta,
+        work_dir / "thefluentbuild_audio",
+    )
+    for index, audio_path in enumerate(line_audio_paths, start=1):
+        require_file_created(str(audio_path), f"TTS audio for TheFluentBuild line {index}")
+    require_file_created(str(cta_audio_path), "TTS audio for TheFluentBuild CTA")
+
+    video_path = render_thefluentbuild_grandma_video(
+        image_path=image_path,
+        output_path=work_dir / _output_name(row),
+        frames_dir=work_dir / "frames",
+        dialogue=dialogue,
+        line_audio_paths=line_audio_paths,
+        cta_audio_path=cta_audio_path,
+    )
+    require_file_created(str(video_path), "TheFluentBuild HyperFrames video")
+    return video_path
+
+
 def _render_row(row: dict, work_dir: Path) -> Path:
     avatar = prop_text(row.get("properties", {}), "Avatar").lower()
     if avatar == "teacherryan":
         return _render_teacher_ryan(row, work_dir)
     if avatar == "oliviaa":
         return _render_oliviaa(row, work_dir)
+    if avatar == "thefluentbuild":
+        return _render_thefluentbuild(row, work_dir)
     raise SafetyError(f"Unsupported HyperFrames avatar: {avatar}")
 
 

@@ -139,6 +139,32 @@ def synthesize_dialogue_audios(
     return line_paths, cta_path
 
 
+def synthesize_thefluentbuild_audios(
+    lines: list[str],
+    cta: str,
+    output_dir: Path,
+) -> tuple[list[Path], Path]:
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty TheFluentBuild dialogue.")
+    if not cta:
+        raise RuntimeError("Refusing to synthesize TheFluentBuild dialogue without CTA.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    token = _access_token()
+    line_paths: list[Path] = []
+
+    for index, line in enumerate(lines, start=1):
+        is_grandma = index % 2 == 0
+        voice = "en-US-Neural2-F" if is_grandma else "en-US-Neural2-C"
+        rate = 0.86 if is_grandma else 0.92
+        output_path = output_dir / f"line_{index:02d}.mp3"
+        line_paths.append(_synthesize_text(line, output_path, token, voice_name=voice, speaking_rate=rate))
+
+    cta_path = output_dir / "cta.mp3"
+    _synthesize_text(cta, cta_path, token, voice_name="en-US-Neural2-F", speaking_rate=0.88)
+    return line_paths, cta_path
+
+
 def synthesize_words(words: list[str], output_path: Path) -> Path:
     """Backward-compatible helper kept for older manual calls.
 

@@ -28,9 +28,16 @@ def parse_dialogue_script(script: str) -> DialogueScript:
             cta = cta_match.group(1).strip().strip('"')
             continue
 
-        line_match = re.match(r"^Line\s+\d+:\s*(.+)$", line, flags=re.IGNORECASE)
+        line_match = re.match(r"^Line\s+\d+(?:\s*\([^)]+\))?:\s*(.+)$", line, flags=re.IGNORECASE)
         if line_match:
             text = line_match.group(1).strip().strip('"')
+            if text:
+                lines.append(text)
+            continue
+
+        speaker_match = re.match(r"^(Person|Learner|Student|Grandma|Guest|Cindy|Oliviaa?):\s*(.+)$", line, flags=re.IGNORECASE)
+        if speaker_match:
+            text = speaker_match.group(2).strip().strip('"')
             if text:
                 lines.append(text)
 
@@ -39,6 +46,6 @@ def parse_dialogue_script(script: str) -> DialogueScript:
     if len(lines) > 12:
         raise DialogueParseError(f"Expected at most 12 dialogue lines, found {len(lines)}.")
     if not cta:
-        raise DialogueParseError("CTA line is required for Oliviaa drama dialogue.")
+        raise DialogueParseError("CTA line is required for dialogue rendering.")
 
     return DialogueScript(lines=lines, cta=cta)
