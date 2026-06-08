@@ -1,33 +1,44 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
+import pytz
+
+from dialogue_parser import parse_dialogue_script
 from drive_client import check_drive_secrets, upload_video_make_public
 from image_analyzer import analyze_vocabulary_grid
 from notion_client import (
     load_local_env,
     prop_text,
-    query_teacher_ryan_animals_pilot,
+    query_ready_hyperframes_rows,
     set_ready_to_publish,
 )
+from render_oliviaa_drama import render_oliviaa_drama_video
 from render_video import download_image, render_teacher_ryan_video
 from safety import (
     PilotLimits,
     SafetyError,
-    require_at_most_one_row,
-    require_empty,
     require_file_created,
     require_item_budget,
     require_non_empty,
-    require_single_row,
     require_tts_budget,
 )
 from script_parser import parse_vocabulary_items
 from tts_google import check_tts_secrets, synthesize_item_audios
+
+
+SLOT_HOURS = {
+    "08:00": 8 * 60,
+    "16:00": 16 * 60,
+    "00:00": 0,
+}
+SUPPORTED_AVATARS = {"teacherryan", "oliviaa"}
 
 
 def repo_root() -> Path:
@@ -35,43 +46,57 @@ def repo_root() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="HyperFrames TeacherRyan animals pilot.")
+    parser = argparse.ArgumentParser(description="Run ready HyperFrames rows from Notion.")
     parser.add_argument("--execute", action="store_true", help="Run real generation/upload/update.")
     return parser.parse_args()
 
 
-def _load_and_validate(dry_run: bool) -> tuple[dict, dict, list[str], int]:
-    limits = PilotLimits()
-    rows = query_teacher_ryan_animals_pilot()
-    page = require_single_row(rows, limits) if dry_run else require_at_most_one_row(rows)
-
-    if page is None:
-        print("No matching HyperFrames pilot row found. Nothing to do.")
-        raise SystemExit(0)
-
-    props = page.get("properties", {})
-    script = prop_text(props, "Script")
-    image_url = prop_text(props, "Image HyperFrames")
-    video_url = prop_text(props, "Lien Video")
-    prompt_1 = prop_text(props, "Prompt 1")
-
-    require_non_empty(image_url, "Image HyperFrames")
-    if video_url:
-        print("Lien Video is already filled. Skipping to avoid duplicate generation.")
-        raise SystemExit(0)
-    require_empty(video_url, "Lien Video")
-    require_non_empty(script, "Script")
-    require_non_empty(prompt_1, "Prompt 1")
-    items = parse_vocabulary_items(script)
-    require_item_budget(items, limits)
-    tts_chars = require_tts_budget(script, limits)
-    return page, props, items, tts_chars
+def toronto_now() -> datetime:
+    return datetime.now(pytz.timezone("America/Toronto"))
 
 
-def _print_summary(page: dict, props: dict, items: list[str], tts_chars: int) -> None:
-    limits = PilotLimits()
-    print("Matched Notion row:")
-    print(f"- page_id: {page.get('id')}")
+def slot_is_due(slot_name: str, now: datetime | None = None) -> bool:
+    current = now or toronto_now()
+    current_minutes = current.hour * 60 + current.minute
+    slot_minutes = SLOT_HOURS.get(slot_name)
+    if slot_minutes is None:
+        return False
+    diff = current_minutes - slot_minutes
+    if slot_minutes == 0:
+        diff = current_minutes if current_minutes < 180 else -1
+    return 0 <= diff <= 480
+
+
+def max_videos_per_run() -> int:
+    value = int(os.getenv("HYPERFRAMES_MAX_VIDEOS", "2"))
+    return max(1, min(value, 2))
+
+
+def _ready_rows_for_now() -> list[dict]:
+    now = toronto_now()
+    today = now.strftime("%Y-%m-%d")
+    rows = query_ready_hyperframes_rows(today)
+    due_rows: list[dict] = []
+
+    for row in rows:
+        props = row.get("properties", {})
+        avatar = prop_text(props, "Avatar").lower()
+        slot = prop_text(props, "Slot")
+        if avatar not in SUPPORTED_AVATARS:
+            print(f"Skipping unsupported HyperFrames avatar: {avatar}")
+            continue
+        if not slot_is_due(slot, now):
+            print(f"Slot {slot} not due yet for HyperFrames row {row.get('id')} - skipping.")
+            continue
+        due_rows.append(row)
+
+    return due_rows[: max_videos_per_run()]
+
+
+def _print_row_summary(row: dict) -> None:
+    props = row.get("properties", {})
+    print("Matched HyperFrames row:")
+    print(f"- page_id: {row.get('id')}")
     print(f"- title: {prop_text(props, 'Titre')}")
     print(f"- avatar: {prop_text(props, 'Avatar')}")
     print(f"- date: {prop_text(props, 'Date Publication')}")
@@ -80,72 +105,145 @@ def _print_summary(page: dict, props: dict, items: list[str], tts_chars: int) ->
     print(f"- status: {prop_text(props, 'Statut')}")
     print(f"- image_hyperframes_present: {bool(prop_text(props, 'Image HyperFrames'))}")
     print(f"- lien_video_empty: {not bool(prop_text(props, 'Lien Video'))}")
-    print(f"- items_from_script: {len(items)} ({', '.join(items)})")
-    print(f"- script_chars_for_tts: {tts_chars}/{limits.max_tts_chars}")
 
 
 def dry_run() -> int:
-    page, props, items, tts_chars = _load_and_validate(dry_run=True)
+    rows = _ready_rows_for_now()
     missing_drive = check_drive_secrets()
     missing_tts = check_tts_secrets()
 
-    print("HYPERFRAMES PILOT DRY-RUN")
+    print("HYPERFRAMES DRY-RUN")
     print("No paid calls will be made.")
     print("No Notion update will be made.")
     print("No audio, video, Drive upload, or Upload-Post publication will run.")
+    print(f"Max videos per run: {max_videos_per_run()}")
     print("")
-    _print_summary(page, props, items, tts_chars)
-    print("")
-    print("Would do later, in real mode:")
-    print("- download/read the Flow image from Image HyperFrames")
-    print("- generate Google Cloud TTS audio for the vocabulary words")
-    print("- render the TeacherRyan animals MP4")
-    print("- upload the MP4 to Google Drive")
-    print("- make the Drive file public/shareable")
-    print("- write the public Drive URL to Lien Video")
-    print("- set Statut to A publier")
-    print("")
+
+    if not rows:
+        print("No ready due HyperFrames row found. Nothing to do.")
+    for row in rows:
+        _print_row_summary(row)
+        print("")
+
     print("Secret readiness check:")
     print(f"- drive_missing: {', '.join(missing_drive) if missing_drive else 'none'}")
     print(f"- tts_missing: {', '.join(missing_tts) if missing_tts else 'none'}")
     return 0
 
 
-def execute() -> int:
-    page, props, items, tts_chars = _load_and_validate(dry_run=False)
-    _print_summary(page, props, items, tts_chars)
+def _output_name(row: dict) -> str:
+    props = row.get("properties", {})
+    avatar = prop_text(props, "Avatar").lower()
+    date = prop_text(props, "Date Publication")
+    slot = prop_text(props, "Slot").replace(":", "")
+    page_id = row.get("id", "")[:8]
+    return f"hyperframes-{avatar}-{date}-{slot}-{page_id}.mp4"
 
-    work_dir = Path(tempfile.mkdtemp(prefix="hyperframes_teacherryan_"))
+
+def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
+    limits = PilotLimits()
+    props = row.get("properties", {})
+    script = prop_text(props, "Script")
+    image_url = prop_text(props, "Image HyperFrames")
+    prompt_1 = prop_text(props, "Prompt 1")
+
+    require_non_empty(image_url, "Image HyperFrames")
+    require_non_empty(script, "Script")
+    require_non_empty(prompt_1, "Prompt 1")
+
+    items = parse_vocabulary_items(script)
+    require_item_budget(items, limits)
+    require_tts_budget(script, limits)
+
+    image_path = download_image(image_url, work_dir / "source_image")
+    analysis = analyze_vocabulary_grid(image_path, items)
+    print(
+        "TeacherRyan image grid detected. "
+        f"cells={analysis.cells_found} vertical={analysis.vertical_lines} horizontal={analysis.horizontal_lines}"
+    )
+
+    item_audio_paths = synthesize_item_audios(items, work_dir / "item_audio")
+    for item in items:
+        require_file_created(str(item_audio_paths[item]), f"TTS audio for {item}")
+
+    video_path = render_teacher_ryan_video(
+        image_path=image_path,
+        item_audio_paths=item_audio_paths,
+        output_path=work_dir / _output_name(row),
+        frames_dir=work_dir / "frames",
+        items=items,
+        item_targets=analysis.targets,
+    )
+    require_file_created(str(video_path), "TeacherRyan HyperFrames video")
+    return video_path
+
+
+def _render_oliviaa(row: dict, work_dir: Path) -> Path:
+    props = row.get("properties", {})
+    script = prop_text(props, "Script")
+    image_url = prop_text(props, "Image HyperFrames")
+    prompt_1 = prop_text(props, "Prompt 1")
+
+    require_non_empty(image_url, "Image HyperFrames")
+    require_non_empty(script, "Script")
+    require_non_empty(prompt_1, "Prompt 1")
+
+    dialogue = parse_dialogue_script(script)
+    image_path = download_image(image_url, work_dir / "source_image")
+    video_path = render_oliviaa_drama_video(
+        image_path=image_path,
+        output_path=work_dir / _output_name(row),
+        frames_dir=work_dir / "frames",
+        dialogue=dialogue,
+    )
+    require_file_created(str(video_path), "Oliviaa HyperFrames video")
+    return video_path
+
+
+def _render_row(row: dict, work_dir: Path) -> Path:
+    avatar = prop_text(row.get("properties", {}), "Avatar").lower()
+    if avatar == "teacherryan":
+        return _render_teacher_ryan(row, work_dir)
+    if avatar == "oliviaa":
+        return _render_oliviaa(row, work_dir)
+    raise SafetyError(f"Unsupported HyperFrames avatar: {avatar}")
+
+
+def _execute_row(row: dict) -> bool:
+    _print_row_summary(row)
+    work_dir = Path(tempfile.mkdtemp(prefix="hyperframes_"))
     try:
-        image_path = download_image(prop_text(props, "Image HyperFrames"), work_dir / "source_image")
-        analysis = analyze_vocabulary_grid(image_path, items)
-        print(
-            "Image grid detected. "
-            f"cells={analysis.cells_found} vertical={analysis.vertical_lines} horizontal={analysis.horizontal_lines}"
-        )
-        item_audio_paths = synthesize_item_audios(items, work_dir / "item_audio")
-        for item in items:
-            require_file_created(str(item_audio_paths[item]), f"TTS audio for {item}")
-
-        video_path = render_teacher_ryan_video(
-            image_path=image_path,
-            item_audio_paths=item_audio_paths,
-            output_path=work_dir / "teacherryan-hyperframes-animals-2026-06-07.mp4",
-            frames_dir=work_dir / "frames",
-            items=items,
-            item_targets=analysis.targets,
-        )
-
-        require_file_created(str(video_path), "HyperFrames video")
-
-        drive_url = upload_video_make_public(video_path, "teacherryan-hyperframes-animals-2026-06-07.mp4")
+        video_path = _render_row(row, work_dir)
+        drive_url = upload_video_make_public(video_path, video_path.name)
         require_non_empty(drive_url, "Google Drive public URL")
-        set_ready_to_publish(page["id"], drive_url)
-        print("HyperFrames pilot completed. Notion Lien Video filled and Statut set to A publier.")
+        set_ready_to_publish(row["id"], drive_url)
+        print("HyperFrames row completed. Notion Lien Video filled and Statut set to A publier.")
         print(f"Drive URL: {drive_url}")
-        return 0
+        return True
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def execute() -> int:
+    rows = _ready_rows_for_now()
+    if not rows:
+        print("No ready due HyperFrames row found. Nothing to do.")
+        return 0
+
+    succeeded = 0
+    failed = 0
+    for row in rows:
+        try:
+            if _execute_row(row):
+                succeeded += 1
+        except Exception as exc:
+            failed += 1
+            print(f"HYPERFRAMES_ROW_FAILED page_id={row.get('id')}: {exc}", file=sys.stderr)
+
+    print(f"HyperFrames summary: succeeded={succeeded} failed={failed}")
+    if succeeded == 0 and failed > 0:
+        return 2
+    return 0
 
 
 def main() -> int:
