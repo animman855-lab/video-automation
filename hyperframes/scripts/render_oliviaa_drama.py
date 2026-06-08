@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import subprocess
+import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -12,8 +14,16 @@ from dialogue_parser import DialogueScript
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
-DURATION_SECONDS = 25.0
-CTA_SECONDS = 3.5
+LINE_SILENCE_SECONDS = 0.25
+CTA_HOLD_SECONDS = 0.8
+
+
+@dataclass(frozen=True)
+class DialogueSegment:
+    text: str
+    start: float
+    end: float
+    index: int
 
 
 def _cover_image(image_path: Path) -> Image.Image:
@@ -146,11 +156,115 @@ def _draw_cta(draw: ImageDraw.ImageDraw, cta: str) -> None:
         y += line_height
 
 
+def _convert_to_wav(ffmpeg: str, source: Path, output_path: Path) -> Path:
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(source),
+        "-ac",
+        "1",
+        "-ar",
+        "24000",
+        "-sample_fmt",
+        "s16",
+        str(output_path),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return output_path
+
+
+def _write_silence(writer: wave.Wave_write, seconds: float) -> None:
+    frames = max(0, int(writer.getframerate() * seconds))
+    writer.writeframes(b"\x00" * frames * writer.getnchannels() * writer.getsampwidth())
+
+
+def _build_synced_audio(
+    ffmpeg: str,
+    line_audio_paths: list[Path],
+    cta_audio_path: Path,
+    dialogue: DialogueScript,
+    output_audio_path: Path,
+    audio_work_dir: Path,
+) -> tuple[Path, list[DialogueSegment], float, float]:
+    if len(line_audio_paths) != len(dialogue.lines):
+        raise ValueError(
+            f"Dialogue has {len(dialogue.lines)} lines but {len(line_audio_paths)} audio files were provided."
+        )
+    if not cta_audio_path.exists() or cta_audio_path.stat().st_size <= 0:
+        raise ValueError("CTA audio is missing or empty.")
+
+    audio_work_dir.mkdir(parents=True, exist_ok=True)
+    normalized_lines = []
+    for index, source in enumerate(line_audio_paths, start=1):
+        if not source.exists() or source.stat().st_size <= 0:
+            raise ValueError(f"Dialogue audio is missing or empty for line {index}.")
+        normalized_lines.append(_convert_to_wav(ffmpeg, source, audio_work_dir / f"line_{index:02d}.wav"))
+    normalized_cta = _convert_to_wav(ffmpeg, cta_audio_path, audio_work_dir / "cta.wav")
+
+    current = 0.0
+    segments: list[DialogueSegment] = []
+    expected_params = None
+
+    with wave.open(str(output_audio_path), "wb") as writer:
+        for index, wav_path in enumerate(normalized_lines):
+            with wave.open(str(wav_path), "rb") as reader:
+                params = reader.getparams()
+                if expected_params is None:
+                    expected_params = params
+                    writer.setparams(params)
+                elif params[:3] != expected_params[:3]:
+                    raise ValueError(f"Inconsistent audio format for line {index + 1}.")
+
+                frames_count = reader.getnframes()
+                duration = frames_count / reader.getframerate()
+                if duration <= 0:
+                    raise ValueError(f"Dialogue audio has invalid duration for line {index + 1}.")
+
+                start = current
+                end = current + duration + LINE_SILENCE_SECONDS
+                writer.writeframes(reader.readframes(frames_count))
+                _write_silence(writer, LINE_SILENCE_SECONDS)
+                segments.append(DialogueSegment(text=dialogue.lines[index], start=start, end=end, index=index))
+                current = end
+
+        cta_start = current
+        with wave.open(str(normalized_cta), "rb") as reader:
+            params = reader.getparams()
+            if expected_params is None:
+                writer.setparams(params)
+            elif params[:3] != expected_params[:3]:
+                raise ValueError("Inconsistent audio format for CTA.")
+
+            frames_count = reader.getnframes()
+            cta_duration = frames_count / reader.getframerate()
+            if cta_duration <= 0:
+                raise ValueError("CTA audio has invalid duration.")
+
+            writer.writeframes(reader.readframes(frames_count))
+            _write_silence(writer, CTA_HOLD_SECONDS)
+            current += cta_duration + CTA_HOLD_SECONDS
+
+    if not segments:
+        raise ValueError("No dialogue segments were created.")
+
+    return output_audio_path, segments, cta_start, current
+
+
+def _active_segment(segments: list[DialogueSegment], seconds: float) -> DialogueSegment | None:
+    for segment in segments:
+        if segment.start <= seconds < segment.end:
+            return segment
+    return None
+
+
 def render_oliviaa_drama_video(
     image_path: Path,
     output_path: Path,
     frames_dir: Path,
     dialogue: DialogueScript,
+    line_audio_paths: list[Path],
+    cta_audio_path: Path,
 ) -> Path:
     import imageio_ffmpeg
 
@@ -158,26 +272,33 @@ def render_oliviaa_drama_video(
         raise ValueError("Cannot render Oliviaa drama without dialogue lines.")
 
     frames_dir.mkdir(parents=True, exist_ok=True)
+    audio_work_dir = frames_dir.parent / "audio_normalized"
     base = _cover_image(image_path)
-    dialogue_duration = DURATION_SECONDS - CTA_SECONDS
-    line_duration = dialogue_duration / len(dialogue.lines)
-    total_frames = int(FPS * DURATION_SECONDS)
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    synced_audio_path, segments, cta_start, duration = _build_synced_audio(
+        ffmpeg=ffmpeg,
+        line_audio_paths=line_audio_paths,
+        cta_audio_path=cta_audio_path,
+        dialogue=dialogue,
+        output_audio_path=frames_dir.parent / "oliviaa-synced-audio.wav",
+        audio_work_dir=audio_work_dir,
+    )
+    total_frames = int(FPS * duration)
 
     for frame_index in range(total_frames):
         seconds = frame_index / FPS
         frame = base.copy()
         draw = ImageDraw.Draw(frame, "RGBA")
+        segment = _active_segment(segments, seconds)
 
-        if seconds < dialogue_duration:
-            line_index = min(int(seconds // line_duration), len(dialogue.lines) - 1)
-            local = (seconds - (line_index * line_duration)) / line_duration
-            _draw_bubble(draw, dialogue.lines[line_index], line_index, local)
-        else:
+        if segment:
+            local = (seconds - segment.start) / max(0.01, segment.end - segment.start)
+            _draw_bubble(draw, segment.text, segment.index, local)
+        elif seconds >= cta_start:
             _draw_cta(draw, dialogue.cta)
 
         frame.save(frames_dir / f"frame_{frame_index:04d}.jpg", "JPEG", quality=92)
 
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     cmd = [
         ffmpeg,
         "-y",
@@ -185,12 +306,16 @@ def render_oliviaa_drama_video(
         str(FPS),
         "-i",
         str(frames_dir / "frame_%04d.jpg"),
+        "-i",
+        str(synced_audio_path),
         "-t",
-        f"{DURATION_SECONDS:.2f}",
+        f"{duration:.2f}",
         "-c:v",
         "libx264",
         "-pix_fmt",
         "yuv420p",
+        "-c:a",
+        "aac",
         str(output_path),
     ]
     subprocess.run(cmd, check=True)
