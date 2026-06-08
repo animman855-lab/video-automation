@@ -80,6 +80,65 @@ def synthesize_item_audios(words: list[str], output_dir: Path) -> dict[str, Path
     return audio_paths
 
 
+def _synthesize_text(
+    text: str,
+    output_path: Path,
+    token: str,
+    voice_name: str,
+    speaking_rate: float = 0.92,
+) -> Path:
+    ssml = f"<speak><prosody rate=\"medium\">{html.escape(text)}</prosody></speak>"
+    response = requests.post(
+        "https://texttospeech.googleapis.com/v1/text:synthesize",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "input": {"ssml": ssml},
+            "voice": {"languageCode": "en-US", "name": voice_name},
+            "audioConfig": {"audioEncoding": "MP3", "speakingRate": speaking_rate},
+        },
+        timeout=60,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Google TTS failed for '{text}': {response.status_code} {response.text}")
+
+    audio_content = response.json().get("audioContent")
+    if not audio_content:
+        raise RuntimeError(f"Google TTS returned empty audio for '{text}'.")
+
+    output_path.write_bytes(base64.b64decode(audio_content))
+    if output_path.stat().st_size <= 0:
+        raise RuntimeError(f"Google TTS wrote an empty audio file for '{text}'.")
+    return output_path
+
+
+def synthesize_dialogue_audios(
+    lines: list[str],
+    cta: str,
+    output_dir: Path,
+) -> tuple[list[Path], Path]:
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty dialogue.")
+    if not cta:
+        raise RuntimeError("Refusing to synthesize dialogue without CTA.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    token = _access_token()
+    line_paths: list[Path] = []
+    voices = ["en-US-Neural2-F", "en-US-Neural2-D"]
+
+    for index, line in enumerate(lines, start=1):
+        voice = voices[(index - 1) % len(voices)]
+        output_path = output_dir / f"line_{index:02d}.mp3"
+        line_paths.append(_synthesize_text(line, output_path, token, voice_name=voice, speaking_rate=0.92))
+
+    cta_path = output_dir / "cta.mp3"
+    _synthesize_text(cta, cta_path, token, voice_name="en-US-Neural2-F", speaking_rate=0.9)
+    return line_paths, cta_path
+
+
 def synthesize_words(words: list[str], output_path: Path) -> Path:
     """Backward-compatible helper kept for older manual calls.
 
