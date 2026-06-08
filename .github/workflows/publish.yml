@@ -36,6 +36,7 @@ jobs:
         run: python publish_images.py
 
       - name: Generer HyperFrames TeacherRyan pilote
+        continue-on-error: true
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
@@ -47,6 +48,7 @@ jobs:
         run: python hyperframes/scripts/run_pilot.py --execute
 
       - name: Lancer le script de publication video
+        if: always()
         env:
           NOTION_TOKEN:        ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID:  ${{ secrets.NOTION_DATABASE_ID }}
