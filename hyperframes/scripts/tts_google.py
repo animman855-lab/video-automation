@@ -114,6 +114,18 @@ def _synthesize_text(
     return output_path
 
 
+def _smooth_spoken_text(text: str) -> str:
+    spoken = text
+    spoken = spoken.replace("'", "")
+    spoken = spoken.replace('"', "")
+    spoken = spoken.replace("’", "")
+    spoken = re.sub(r"\s*,\s*", " ", spoken)
+    spoken = re.sub(r"\s*:\s*", ". ", spoken)
+    spoken = re.sub(r"\s*;\s*", ". ", spoken)
+    spoken = re.sub(r"\s+", " ", spoken).strip()
+    return spoken
+
+
 def synthesize_dialogue_audios(
     lines: list[str],
     cta: str,
@@ -156,12 +168,14 @@ def synthesize_thefluentbuild_audios(
     for index, line in enumerate(lines, start=1):
         is_grandma = index % 2 == 0
         voice = "en-US-Neural2-F" if is_grandma else "en-US-Neural2-C"
-        rate = 0.86 if is_grandma else 0.92
+        rate = 0.9 if is_grandma else 0.94
         output_path = output_dir / f"line_{index:02d}.mp3"
-        line_paths.append(_synthesize_text(line, output_path, token, voice_name=voice, speaking_rate=rate))
+        line_paths.append(
+            _synthesize_text(_smooth_spoken_text(line), output_path, token, voice_name=voice, speaking_rate=rate)
+        )
 
     cta_path = output_dir / "cta.mp3"
-    _synthesize_text(cta, cta_path, token, voice_name="en-US-Neural2-F", speaking_rate=0.88)
+    _synthesize_text(_smooth_spoken_text(cta), cta_path, token, voice_name="en-US-Neural2-F", speaking_rate=0.9)
     return line_paths, cta_path
 
 
