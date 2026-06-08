@@ -27,6 +27,14 @@ jobs:
       - name: Afficher heure serveur
         run: date
 
+      - name: Lancer le script de publication image
+        if: always()
+        env:
+          NOTION_TOKEN:             ${{ secrets.NOTION_TOKEN }}
+          NOTION_IMAGE_DATABASE_ID: ${{ secrets.NOTION_IMAGE_DATABASE_ID }}
+          UPLOAD_POST_API_KEY:      ${{ secrets.UPLOAD_POST_API_KEY }}
+        run: python publish_images.py
+
       - name: Generer HyperFrames TeacherRyan pilote
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -45,10 +53,3 @@ jobs:
           UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
         run: python publish.py
-
-      - name: Lancer le script de publication image
-        env:
-          NOTION_TOKEN:             ${{ secrets.NOTION_TOKEN }}
-          NOTION_IMAGE_DATABASE_ID: ${{ secrets.NOTION_IMAGE_DATABASE_ID }}
-          UPLOAD_POST_API_KEY:      ${{ secrets.UPLOAD_POST_API_KEY }}
-        run: python publish_images.py
