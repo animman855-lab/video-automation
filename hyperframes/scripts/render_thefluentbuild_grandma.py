@@ -95,10 +95,10 @@ def _bubble_position(speaker: str, index: int, box_w: int, box_h: int) -> tuple[
     grandma_y = [260, 500, 700]
     learner_y = [340, 570, 740]
     if speaker == "grandma":
-        x = 70
+        x = WIDTH - box_w - 70
         y = grandma_y[(index // 2) % len(grandma_y)]
     else:
-        x = WIDTH - box_w - 70
+        x = 70
         y = learner_y[(index // 2) % len(learner_y)]
     return x, min(y, 820 - box_h)
 
@@ -138,9 +138,9 @@ def _draw_bubble(draw: ImageDraw.ImageDraw, segment: GrandmaSegment, pulse: floa
 
     tail_y = y2 - 28
     if segment.speaker == "grandma":
-        tail = [(x1 + 74, tail_y), (x1 + 126, tail_y), (x1 + 66, tail_y + 58)]
-    else:
         tail = [(x2 - 74, tail_y), (x2 - 126, tail_y), (x2 - 66, tail_y + 58)]
+    else:
+        tail = [(x1 + 74, tail_y), (x1 + 126, tail_y), (x1 + 66, tail_y + 58)]
     draw.polygon(tail, fill=(255, 255, 255), outline=border)
 
     text_y = y1 + padding_y - 5
