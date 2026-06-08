@@ -12,7 +12,6 @@ import pytz
 
 from dialogue_parser import parse_dialogue_script
 from drive_client import check_drive_secrets, upload_video_make_public
-from image_analyzer import analyze_vocabulary_grid
 from notion_client import (
     load_local_env,
     prop_text,
@@ -39,6 +38,18 @@ SLOT_HOURS = {
     "00:00": 0,
 }
 SUPPORTED_AVATARS = {"teacherryan", "oliviaa"}
+TEACHERRYAN_FIXED_TARGETS = [
+    (300, 420),
+    (780, 420),
+    (300, 650),
+    (780, 650),
+    (300, 880),
+    (780, 880),
+    (300, 1110),
+    (780, 1110),
+    (300, 1340),
+    (780, 1340),
+]
 
 
 def repo_root() -> Path:
@@ -140,6 +151,15 @@ def _output_name(row: dict) -> str:
     return f"hyperframes-{avatar}-{date}-{slot}-{page_id}.mp4"
 
 
+def _teacher_ryan_fixed_targets(items: list[str]) -> dict[str, tuple[int, int]]:
+    if len(items) > len(TEACHERRYAN_FIXED_TARGETS):
+        raise SafetyError(
+            "TeacherRyan fixed 2x5 layout supports at most "
+            f"{len(TEACHERRYAN_FIXED_TARGETS)} items, got {len(items)}."
+        )
+    return {item: TEACHERRYAN_FIXED_TARGETS[index] for index, item in enumerate(items)}
+
+
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     limits = PilotLimits()
     props = row.get("properties", {})
@@ -156,11 +176,8 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     require_tts_budget(script, limits)
 
     image_path = download_image(image_url, work_dir / "source_image")
-    analysis = analyze_vocabulary_grid(image_path, items)
-    print(
-        "TeacherRyan image grid detected. "
-        f"cells={analysis.cells_found} vertical={analysis.vertical_lines} horizontal={analysis.horizontal_lines}"
-    )
+    item_targets = _teacher_ryan_fixed_targets(items)
+    print("TeacherRyan fixed 2x5 arrow targets enabled. Image analysis is not required.")
 
     item_audio_paths = synthesize_item_audios(items, work_dir / "item_audio")
     for item in items:
@@ -172,7 +189,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
         output_path=work_dir / _output_name(row),
         frames_dir=work_dir / "frames",
         items=items,
-        item_targets=analysis.targets,
+        item_targets=item_targets,
     )
     require_file_created(str(video_path), "TeacherRyan HyperFrames video")
     return video_path
