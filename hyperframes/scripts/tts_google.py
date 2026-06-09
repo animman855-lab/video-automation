@@ -179,6 +179,27 @@ def synthesize_thefluentbuild_audios(
     return line_paths, cta_path
 
 
+def synthesize_cindy_podcast_audios(lines: list, output_dir: Path) -> list[Path]:
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty Cindy podcast.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    token = _access_token()
+    line_paths: list[Path] = []
+
+    for index, line in enumerate(lines, start=1):
+        speaker = getattr(line, "speaker", "")
+        text = getattr(line, "text", "")
+        if not text:
+            raise RuntimeError(f"Missing Cindy podcast text for line {index}.")
+        voice = "en-US-Neural2-F" if speaker == "cindy" else "en-US-Neural2-D"
+        rate = 0.98 if speaker == "cindy" else 0.96
+        output_path = output_dir / f"line_{index:02d}.mp3"
+        line_paths.append(_synthesize_text(text, output_path, token, voice_name=voice, speaking_rate=rate))
+
+    return line_paths
+
+
 def synthesize_words(words: list[str], output_path: Path) -> Path:
     """Backward-compatible helper kept for older manual calls.
 

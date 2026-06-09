@@ -18,6 +18,8 @@ from notion_client import (
     query_ready_hyperframes_rows,
     set_ready_to_publish,
 )
+from podcast_parser import parse_podcast_script
+from render_cindy_podcast import render_cindy_podcast_video
 from render_oliviaa_drama import render_oliviaa_drama_video
 from render_thefluentbuild_grandma import render_thefluentbuild_grandma_video
 from render_video import download_image, render_teacher_ryan_video
@@ -32,6 +34,7 @@ from safety import (
 from script_parser import parse_vocabulary_items
 from tts_google import (
     check_tts_secrets,
+    synthesize_cindy_podcast_audios,
     synthesize_dialogue_audios,
     synthesize_item_audios,
     synthesize_thefluentbuild_audios,
@@ -43,7 +46,7 @@ SLOT_HOURS = {
     "16:00": 16 * 60,
     "00:00": 0,
 }
-SUPPORTED_AVATARS = {"teacherryan", "oliviaa", "thefluentbuild"}
+SUPPORTED_AVATARS = {"teacherryan", "oliviaa", "thefluentbuild", "cindy"}
 TEACHERRYAN_FIXED_TARGETS = [
     (300, 420),
     (780, 420),
@@ -267,6 +270,36 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     return video_path
 
 
+def _render_cindy(row: dict, work_dir: Path) -> Path:
+    props = row.get("properties", {})
+    script = prop_text(props, "Script")
+    image_url = prop_text(props, "Image HyperFrames")
+    prompt_1 = prop_text(props, "Prompt 1")
+
+    require_non_empty(image_url, "Image HyperFrames")
+    require_non_empty(script, "Script")
+    require_non_empty(prompt_1, "Prompt 1")
+
+    podcast = parse_podcast_script(script)
+    image_path = download_image(image_url, work_dir / "source_image")
+    line_audio_paths = synthesize_cindy_podcast_audios(
+        podcast.lines,
+        work_dir / "cindy_audio",
+    )
+    for index, audio_path in enumerate(line_audio_paths, start=1):
+        require_file_created(str(audio_path), f"TTS audio for Cindy podcast line {index}")
+
+    video_path = render_cindy_podcast_video(
+        image_path=image_path,
+        output_path=work_dir / _output_name(row),
+        frames_dir=work_dir / "frames",
+        podcast=podcast,
+        line_audio_paths=line_audio_paths,
+    )
+    require_file_created(str(video_path), "Cindy HyperFrames podcast video")
+    return video_path
+
+
 def _render_row(row: dict, work_dir: Path) -> Path:
     avatar = prop_text(row.get("properties", {}), "Avatar").lower()
     if avatar == "teacherryan":
@@ -275,6 +308,8 @@ def _render_row(row: dict, work_dir: Path) -> Path:
         return _render_oliviaa(row, work_dir)
     if avatar == "thefluentbuild":
         return _render_thefluentbuild(row, work_dir)
+    if avatar == "cindy":
+        return _render_cindy(row, work_dir)
     raise SafetyError(f"Unsupported HyperFrames avatar: {avatar}")
 
 
