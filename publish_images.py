@@ -30,6 +30,7 @@ SLOT_HOURS = {
 }
 
 SLOT_WINDOW_MINUTES = 90
+MIDNIGHT_SLOT_WINDOW_MINUTES = 180
 
 
 def slot_is_due(slot_name):
@@ -44,7 +45,7 @@ def slot_is_due(slot_name):
     diff = current_minutes - slot_minutes
 
     if slot_minutes == 0:
-        diff = current_minutes if current_minutes < 180 else -1
+        return 0 <= current_minutes <= MIDNIGHT_SLOT_WINDOW_MINUTES
 
     return 0 <= diff <= SLOT_WINDOW_MINUTES
 
