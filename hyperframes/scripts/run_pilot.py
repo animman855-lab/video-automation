@@ -88,8 +88,8 @@ def slot_is_due(slot_name: str, now: datetime | None = None) -> bool:
 
 
 def max_videos_per_run() -> int:
-    value = int(os.getenv("HYPERFRAMES_MAX_VIDEOS", "2"))
-    return max(1, min(value, 2))
+    value = int(os.getenv("HYPERFRAMES_MAX_VIDEOS", "5"))
+    return max(1, min(value, 5))
 
 
 def _ready_rows_for_now() -> list[dict]:
@@ -97,6 +97,7 @@ def _ready_rows_for_now() -> list[dict]:
     today = now.strftime("%Y-%m-%d")
     rows = query_ready_hyperframes_rows(today)
     due_rows: list[dict] = []
+    avatars_seen: set[str] = set()
 
     for row in rows:
         props = row.get("properties", {})
@@ -108,9 +109,15 @@ def _ready_rows_for_now() -> list[dict]:
         if not slot_is_due(slot, now):
             print(f"Slot {slot} not due yet for HyperFrames row {row.get('id')} - skipping.")
             continue
+        if avatar in avatars_seen:
+            print(f"Avatar {avatar} already selected for this HyperFrames run - skipping row {row.get('id')}.")
+            continue
         due_rows.append(row)
+        avatars_seen.add(avatar)
+        if len(due_rows) >= max_videos_per_run():
+            break
 
-    return due_rows[: max_videos_per_run()]
+    return due_rows
 
 
 def _print_row_summary(row: dict) -> None:
