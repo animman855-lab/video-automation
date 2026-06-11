@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -263,6 +264,11 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     require_non_empty(prompt_1, "Prompt 1")
 
     dialogue = parse_dialogue_script(script)
+    if "grandma" not in dialogue.speakers:
+        dialogue = replace(
+            dialogue,
+            speakers=["learner" if index % 2 == 0 else "grandma" for index in range(len(dialogue.lines))],
+        )
     image_path = download_image(image_url, work_dir / "source_image")
     line_audio_paths, cta_audio_path = synthesize_thefluentbuild_audios(
         dialogue.lines,
