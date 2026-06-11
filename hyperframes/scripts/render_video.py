@@ -73,7 +73,7 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def _draw_current_word(draw: ImageDraw.ImageDraw, word: str, pulse: float) -> None:
-    font = _font(72)
+    font = _font(64)
     label = word.upper()
     bbox = draw.textbbox((0, 0), label, font=font)
     text_w = bbox[2] - bbox[0]
@@ -83,7 +83,7 @@ def _draw_current_word(draw: ImageDraw.ImageDraw, word: str, pulse: float) -> No
     box_w = text_w + padding_x * 2
     box_h = text_h + padding_y * 2
     x1 = (WIDTH - box_w) // 2
-    y1 = 54
+    y1 = 62
     x2 = x1 + box_w
     y2 = y1 + box_h
     outline_width = 6 + int(math.sin(pulse * math.pi * 2) * 2)
@@ -132,6 +132,11 @@ def _draw_arrow(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float
     color = (22, 196, 79)
     width = 18
 
+    for glow_width, glow_color in [
+        (34, (161, 255, 190)),
+        (26, (103, 235, 143)),
+    ]:
+        draw.line([start, end], fill=glow_color, width=glow_width)
     draw.line([start, end], fill=color, width=width)
     angle = math.atan2(end[1] - start[1], end[0] - start[0])
     head_len = 48
@@ -146,17 +151,37 @@ def _draw_arrow(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float
     draw.polygon([end, left, right], fill=color)
 
 
+def _draw_active_cell_highlight(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float) -> None:
+    tx, ty = target
+    cell_w = 430
+    cell_h = 205
+    x1 = max(52, tx - cell_w // 2)
+    y1 = max(250, ty - cell_h // 2)
+    x2 = min(WIDTH - 52, tx + cell_w // 2)
+    y2 = min(HEIGHT - 260, ty + cell_h // 2)
+    pulse_alpha = int(8 * math.sin(pulse * math.pi * 2))
+    for expand, color, width in [
+        (16, (178, 255, 205), 14),
+        (6, (48, 207, 104), 8 + pulse_alpha // 2),
+    ]:
+        draw.rounded_rectangle(
+            (x1 - expand, y1 - expand, x2 + expand, y2 + expand),
+            radius=28,
+            outline=color,
+            width=max(3, width),
+        )
+
+
 def _draw_cta(draw: ImageDraw.ImageDraw) -> None:
-    text = "Follow TeacherRyan for more English vocabulary."
-    font = _font(52)
-    box = (90, 1420, 990, 1625)
-    draw.rounded_rectangle(box, radius=30, fill=(255, 255, 255), outline=(30, 30, 30), width=3)
+    font = _font(50)
+    box = (100, 1368, 980, 1586)
+    draw.rounded_rectangle(box, radius=34, fill=(255, 255, 255), outline=(37, 176, 88), width=5)
     lines = ["Follow TeacherRyan", "for more English vocabulary."]
-    y = 1460
+    y = 1414
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y), line, fill=(10, 10, 10), font=font)
-        y += 62
+        y += 60
 
 
 def _convert_to_wav(ffmpeg: str, source: Path, output_path: Path) -> Path:
@@ -188,6 +213,7 @@ def _build_synced_audio(
     items: list[str],
     output_audio_path: Path,
     audio_work_dir: Path,
+    cta_audio_path: Path | None = None,
 ) -> tuple[Path, list[ItemSegment], float]:
     if len(items) > MAX_ITEMS:
         raise ValueError(f"TeacherRyan HyperFrames supports at most {MAX_ITEMS} items, got {len(items)}.")
@@ -235,12 +261,30 @@ def _build_synced_audio(
                 segments.append(ItemSegment(item=item, start=start, end=end, page=page))
                 current = end
 
-        _write_silence(writer, CTA_SECONDS)
+        if cta_audio_path:
+            cta_wav_path = _convert_to_wav(ffmpeg, cta_audio_path, audio_work_dir / "cta.wav")
+            with wave.open(str(cta_wav_path), "rb") as reader:
+                params = reader.getparams()
+                if expected_params is None:
+                    expected_params = params
+                    writer.setparams(params)
+                elif params[:3] != expected_params[:3]:
+                    raise ValueError("Inconsistent audio format for TeacherRyan CTA.")
+                frames_count = reader.getnframes()
+                cta_duration = frames_count / reader.getframerate()
+                if cta_duration <= 0:
+                    raise ValueError("TeacherRyan CTA audio has invalid duration.")
+                writer.writeframes(reader.readframes(frames_count))
+                _write_silence(writer, max(0.4, CTA_SECONDS - cta_duration))
+                current += max(CTA_SECONDS, cta_duration + 0.4)
+        else:
+            _write_silence(writer, CTA_SECONDS)
+            current += CTA_SECONDS
 
     if not segments:
         raise ValueError("No audio segments were created.")
 
-    return output_audio_path, segments, current + CTA_SECONDS
+    return output_audio_path, segments, current
 
 
 def _active_segment(segments: list[ItemSegment], seconds: float) -> ItemSegment | None:
@@ -257,6 +301,7 @@ def render_teacher_ryan_video(
     frames_dir: Path,
     items: list[str],
     item_targets: dict[str, tuple[int, int]],
+    cta_audio_path: Path | None = None,
 ) -> Path:
     import imageio_ffmpeg
 
@@ -280,6 +325,7 @@ def render_teacher_ryan_video(
         items=items,
         output_audio_path=frames_dir.parent / "teacherryan-synced-audio.wav",
         audio_work_dir=audio_work_dir,
+        cta_audio_path=cta_audio_path,
     )
     total_frames = int(FPS * duration)
 
@@ -293,7 +339,9 @@ def render_teacher_ryan_video(
             animal = segment.item
             pulse = (frame_index % FPS) / FPS
             _draw_page_marker(draw, segment.page, page_count)
-            _draw_arrow(draw, item_targets[animal], pulse)
+            target = item_targets[animal]
+            _draw_active_cell_highlight(draw, target, pulse)
+            _draw_arrow(draw, target, pulse)
             _draw_current_word(draw, animal, pulse)
         else:
             _draw_cta(draw)

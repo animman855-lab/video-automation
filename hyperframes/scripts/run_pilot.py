@@ -36,7 +36,7 @@ from tts_google import (
     check_tts_secrets,
     synthesize_cindy_podcast_audios,
     synthesize_dialogue_audios,
-    synthesize_item_audios,
+    synthesize_teacher_ryan_audios,
     synthesize_thefluentbuild_audios,
 )
 
@@ -59,6 +59,7 @@ TEACHERRYAN_FIXED_TARGETS = [
     (300, 1340),
     (780, 1340),
 ]
+TEACHERRYAN_CTA = "Follow TeacherRyan for more English vocabulary."
 
 
 def repo_root() -> Path:
@@ -195,9 +196,14 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     item_targets = _teacher_ryan_fixed_targets(items)
     print("TeacherRyan fixed 2x5 arrow targets enabled. Image analysis is not required.")
 
-    item_audio_paths = synthesize_item_audios(items, work_dir / "item_audio")
+    item_audio_paths, cta_audio_path = synthesize_teacher_ryan_audios(
+        items,
+        TEACHERRYAN_CTA,
+        work_dir / "item_audio",
+    )
     for item in items:
         require_file_created(str(item_audio_paths[item]), f"TTS audio for {item}")
+    require_file_created(str(cta_audio_path), "TTS audio for TeacherRyan CTA")
 
     video_path = render_teacher_ryan_video(
         image_path=image_path,
@@ -206,6 +212,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
         frames_dir=work_dir / "frames",
         items=items,
         item_targets=item_targets,
+        cta_audio_path=cta_audio_path,
     )
     require_file_created(str(video_path), "TeacherRyan HyperFrames video")
     return video_path
