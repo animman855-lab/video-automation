@@ -234,6 +234,7 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
         dialogue.lines,
         dialogue.cta,
         work_dir / "dialogue_audio",
+        speakers=dialogue.speakers,
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for Oliviaa line {index}")

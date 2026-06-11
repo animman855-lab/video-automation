@@ -24,6 +24,7 @@ class DialogueSegment:
     start: float
     end: float
     index: int
+    speaker: str
 
 
 def _cover_image(image_path: Path) -> Image.Image:
@@ -74,19 +75,21 @@ def _wrap_text(text: str, font: ImageFont.ImageFont, max_width: int) -> list[str
     return lines
 
 
-def _bubble_position(index: int, box_w: int, box_h: int) -> tuple[int, int, str]:
-    positions = [
-        (72, 235, "left"),
-        (WIDTH - box_w - 72, 360, "right"),
-        (110, 500, "left"),
-        (WIDTH - box_w - 110, 630, "right"),
-    ]
-    x, y, side = positions[index % len(positions)]
+def _bubble_position(index: int, box_w: int, box_h: int, speaker: str) -> tuple[int, int, str]:
+    is_oliviaa = speaker in {"olivia", "oliviaa", "oliviaaa"}
+    if is_oliviaa:
+        x = 68
+        y = 230 if index % 4 in {0, 1} else 505
+        side = "left"
+    else:
+        x = WIDTH - box_w - 68
+        y = 350 if index % 4 in {0, 1} else 625
+        side = "right"
     y = min(y, 760 - box_h)
     return x, max(220, y), side
 
 
-def _draw_bubble(draw: ImageDraw.ImageDraw, text: str, index: int, pulse: float) -> None:
+def _draw_bubble(draw: ImageDraw.ImageDraw, text: str, index: int, speaker: str, pulse: float) -> None:
     font = _font(48)
     max_text_width = 720
     lines = _wrap_text(text, font, max_text_width)
@@ -99,8 +102,9 @@ def _draw_bubble(draw: ImageDraw.ImageDraw, text: str, index: int, pulse: float)
         text_w = max(text_w, bbox[2] - bbox[0])
     box_w = min(max_text_width + padding_x * 2, max(420, text_w + padding_x * 2))
     box_h = len(lines) * line_height + padding_y * 2
-    x, y, side = _bubble_position(index, box_w, box_h)
+    x, y, side = _bubble_position(index, box_w, box_h, speaker)
     shadow = 8
+    outline = (244, 184, 170) if speaker in {"olivia", "oliviaa", "oliviaaa"} else (214, 216, 222)
 
     scale = 1.0 + math.sin(pulse * math.pi) * 0.012
     center_x = x + box_w / 2
@@ -121,7 +125,7 @@ def _draw_bubble(draw: ImageDraw.ImageDraw, text: str, index: int, pulse: float)
         (x1, y1, x2, y2),
         radius=32,
         fill=(255, 255, 255),
-        outline=(235, 235, 235),
+        outline=outline,
         width=3,
     )
 
@@ -130,7 +134,7 @@ def _draw_bubble(draw: ImageDraw.ImageDraw, text: str, index: int, pulse: float)
         tail = [(x1 + 72, tail_y), (x1 + 126, tail_y), (x1 + 72, tail_y + 58)]
     else:
         tail = [(x2 - 72, tail_y), (x2 - 126, tail_y), (x2 - 72, tail_y + 58)]
-    draw.polygon(tail, fill=(255, 255, 255), outline=(235, 235, 235))
+    draw.polygon(tail, fill=(255, 255, 255), outline=outline)
 
     text_y = y1 + padding_y - 4
     for line in lines:
@@ -225,7 +229,18 @@ def _build_synced_audio(
                 end = current + duration + LINE_SILENCE_SECONDS
                 writer.writeframes(reader.readframes(frames_count))
                 _write_silence(writer, LINE_SILENCE_SECONDS)
-                segments.append(DialogueSegment(text=dialogue.lines[index], start=start, end=end, index=index))
+                speaker = dialogue.speakers[index] if index < len(dialogue.speakers) else (
+                    "oliviaa" if index % 2 == 0 else "male"
+                )
+                segments.append(
+                    DialogueSegment(
+                        text=dialogue.lines[index],
+                        start=start,
+                        end=end,
+                        index=index,
+                        speaker=speaker,
+                    )
+                )
                 current = end
 
         cta_start = current
@@ -293,7 +308,7 @@ def render_oliviaa_drama_video(
 
         if segment:
             local = (seconds - segment.start) / max(0.01, segment.end - segment.start)
-            _draw_bubble(draw, segment.text, segment.index, local)
+            _draw_bubble(draw, segment.text, segment.index, segment.speaker, local)
         elif seconds >= cta_start:
             _draw_cta(draw, dialogue.cta)
 

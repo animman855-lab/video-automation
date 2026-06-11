@@ -138,6 +138,7 @@ def synthesize_dialogue_audios(
     lines: list[str],
     cta: str,
     output_dir: Path,
+    speakers: list[str] | None = None,
 ) -> tuple[list[Path], Path]:
     if not lines:
         raise RuntimeError("Refusing to synthesize an empty dialogue.")
@@ -147,15 +148,17 @@ def synthesize_dialogue_audios(
     output_dir.mkdir(parents=True, exist_ok=True)
     token = _access_token()
     line_paths: list[Path] = []
-    voices = ["en-US-Neural2-F", "en-US-Neural2-D"]
+    speakers = speakers or []
 
     for index, line in enumerate(lines, start=1):
-        voice = voices[(index - 1) % len(voices)]
+        speaker = speakers[index - 1] if index - 1 < len(speakers) else ("oliviaa" if index % 2 == 1 else "male")
+        voice = "en-US-Neural2-F" if speaker in {"olivia", "oliviaa", "oliviaaa"} else "en-US-Neural2-D"
+        rate = 0.94 if speaker in {"olivia", "oliviaa", "oliviaaa"} else 0.92
         output_path = output_dir / f"line_{index:02d}.mp3"
-        line_paths.append(_synthesize_text(line, output_path, token, voice_name=voice, speaking_rate=0.92))
+        line_paths.append(_synthesize_text(_smooth_spoken_text(line), output_path, token, voice_name=voice, speaking_rate=rate))
 
     cta_path = output_dir / "cta.mp3"
-    _synthesize_text(cta, cta_path, token, voice_name="en-US-Neural2-F", speaking_rate=0.9)
+    _synthesize_text(_smooth_spoken_text(cta), cta_path, token, voice_name="en-US-Neural2-F", speaking_rate=0.9)
     return line_paths, cta_path
 
 
