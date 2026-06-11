@@ -151,27 +151,6 @@ def _draw_arrow(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float
     draw.polygon([end, left, right], fill=color)
 
 
-def _draw_active_cell_highlight(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float) -> None:
-    tx, ty = target
-    cell_w = 430
-    cell_h = 205
-    x1 = max(52, tx - cell_w // 2)
-    y1 = max(250, ty - cell_h // 2)
-    x2 = min(WIDTH - 52, tx + cell_w // 2)
-    y2 = min(HEIGHT - 260, ty + cell_h // 2)
-    pulse_alpha = int(8 * math.sin(pulse * math.pi * 2))
-    for expand, color, width in [
-        (16, (178, 255, 205), 14),
-        (6, (48, 207, 104), 8 + pulse_alpha // 2),
-    ]:
-        draw.rounded_rectangle(
-            (x1 - expand, y1 - expand, x2 + expand, y2 + expand),
-            radius=28,
-            outline=color,
-            width=max(3, width),
-        )
-
-
 def _draw_cta(draw: ImageDraw.ImageDraw) -> None:
     font = _font(50)
     box = (100, 1368, 980, 1586)
@@ -340,7 +319,6 @@ def render_teacher_ryan_video(
             pulse = (frame_index % FPS) / FPS
             _draw_page_marker(draw, segment.page, page_count)
             target = item_targets[animal]
-            _draw_active_cell_highlight(draw, target, pulse)
             _draw_arrow(draw, target, pulse)
             _draw_current_word(draw, animal, pulse)
         else:
