@@ -166,6 +166,7 @@ def synthesize_thefluentbuild_audios(
     lines: list[str],
     cta: str,
     output_dir: Path,
+    speakers: list[str] | None = None,
 ) -> tuple[list[Path], Path]:
     if not lines:
         raise RuntimeError("Refusing to synthesize an empty TheFluentBuild dialogue.")
@@ -175,9 +176,11 @@ def synthesize_thefluentbuild_audios(
     output_dir.mkdir(parents=True, exist_ok=True)
     token = _access_token()
     line_paths: list[Path] = []
+    speakers = speakers or []
 
     for index, line in enumerate(lines, start=1):
-        is_grandma = index % 2 == 0
+        speaker = speakers[index - 1] if index - 1 < len(speakers) else ("grandma" if index % 2 == 0 else "learner")
+        is_grandma = speaker == "grandma"
         voice = "en-US-Neural2-F" if is_grandma else "en-US-Neural2-C"
         rate = 0.9 if is_grandma else 0.94
         output_path = output_dir / f"line_{index:02d}.mp3"

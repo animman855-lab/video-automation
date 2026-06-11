@@ -243,7 +243,11 @@ def _build_synced_audio(
                 end = current + segment_duration
                 writer.writeframes(reader.readframes(frames_count))
                 _write_silence(writer, segment_duration - duration)
-                speaker = "grandma" if index % 2 == 0 else "learner"
+                speaker = dialogue.speakers[index - 1] if index - 1 < len(dialogue.speakers) else (
+                    "grandma" if index % 2 == 0 else "learner"
+                )
+                if speaker != "grandma":
+                    speaker = "learner"
                 segments.append(
                     GrandmaSegment(
                         text=dialogue.lines[index - 1],
