@@ -67,6 +67,8 @@ SLOT_HOURS = {
     "00:00": 0,
 }
 
+SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW = {"kayla"}
+
 
 def slot_is_due(slot_name):
     tz = pytz.timezone("America/Toronto")
@@ -368,6 +370,10 @@ def main():
         slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
 
         print(f"\n--- {titre_notion} | {avatar} | Slot: {slot} | Platforms: {plateformes} ---")
+
+        if avatar.lower() in SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW:
+            print(f"  Avatar {avatar} is handled by a dedicated workflow - skipping.")
+            continue
 
         if not slot_is_due(slot):
             print(f"  Slot {slot} not due yet - skipping.")
