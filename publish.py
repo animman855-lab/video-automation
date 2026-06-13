@@ -51,6 +51,8 @@ PINTEREST_BOARDS = {
     "kayla": "1108800439448657323",
 }
 
+MIN_SUCCESSFUL_PLATFORMS = 2
+
 YOUTUBE_HASHTAGS = [
     "#englishmastery",
     "#englishvocab",
@@ -393,7 +395,8 @@ def main():
         print("  Downloading video...")
         video_path = download_video(lien_video)
 
-        all_success = True
+        successes = 0
+        failures = 0
         for platform in plateformes:
             platform_upper = platform.upper()
             titre = metadata.get(f"{platform_upper}_TITLE", "")
@@ -411,13 +414,16 @@ def main():
             result = publish_video(video_path, titre, description, avatar, platform)
 
             if not (result.get("success") and result.get("status") != "failed"):
-                all_success = False
+                failures += 1
                 print(f"  Failed on {platform}")
+            else:
+                successes += 1
 
-        if all_success:
+        print(f"  Publish result: successes={successes} failures={failures}")
+        if successes >= MIN_SUCCESSFUL_PLATFORMS:
             mark_as_published(page_id)
         else:
-            print("  Some platforms failed - Notion NOT updated")
+            print("  Not enough successful platforms - Notion NOT updated")
 
         os.remove(video_path)
 
