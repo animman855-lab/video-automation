@@ -45,7 +45,7 @@ def repo_root() -> Path:
 
 OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp4"
 CANVAS_SIZE = (1080, 1920)
-MAX_CARDS = 7
+MAX_CARDS = 5
 CARD_MAX_SECONDS = 12.4
 APPEND_OUTRO_MAX_SOURCE_SECONDS = 15.5
 
@@ -116,6 +116,22 @@ def _clean_text(value: str, max_chars: int = 92) -> str:
     return text[: max_chars - 1].rsplit(" ", 1)[0] + "..."
 
 
+def _card_line(value: str, fallback: str, max_chars: int = 42) -> str:
+    text = _clean_text(value, max_chars + 18)
+    text = re.sub(r"^(hook|problem|solution|main message|cta):\s*", "", text, flags=re.IGNORECASE)
+    text = text.strip(" \"'")
+    if not text:
+        return fallback
+    if len(text) <= max_chars:
+        return text
+    sentence = re.split(r"[.!?;]", text, maxsplit=1)[0].strip()
+    if 8 <= len(sentence) <= max_chars:
+        return sentence
+    words = text.split()
+    shortened = " ".join(words[:6]).strip()
+    return _clean_text(shortened or fallback, max_chars)
+
+
 def _short_title(text: str, fallback: str, max_chars: int = 34) -> str:
     cleaned = _clean_text(text, max_chars + 12)
     if not cleaned:
@@ -147,112 +163,6 @@ def _classify_kayla_format(script: str, prompt: str, title: str) -> str:
         return "confession"
     return "face_camera_hook"
 
-
-def _extract_correction_cards(text: str) -> list[KaylaCard]:
-    cards: list[KaylaCard] = []
-    patterns = [
-        r"(?:don't|dont|do not|not)\s+say:?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;)\s*(?:say|say this|instead|natural):?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;|$)",
-        r"not:?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;)\s*say:?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;|$)",
-    ]
-    for pattern in patterns:
-        for wrong, right in re.findall(pattern, text, flags=re.IGNORECASE | re.DOTALL):
-            wrong = _clean_text(wrong, 58)
-            right = _clean_text(right, 58)
-            if wrong and right and wrong.lower() != right.lower():
-                cards.append(KaylaCard("✅", "Say it naturally", (f"❌ {wrong}", f"✅ {right}"), "correction"))
-            if len(cards) >= MAX_CARDS:
-                return cards
-    return cards
-
-
-def _topic_emoji(text: str) -> str:
-    lower = text.lower()
-    if any(term in lower for term in ["phone", "app", "saloo", "screen"]):
-        return "📱"
-    if any(term in lower for term in ["listen", "ear", "voice", "pronunciation"]):
-        return "🎧"
-    if any(term in lower for term in ["speak", "speaking", "conversation", "reply"]):
-        return "🗣️"
-    if any(term in lower for term in ["job", "work", "interview", "meeting"]):
-        return "💼"
-    if any(term in lower for term in ["travel", "airport", "hotel"]):
-        return "✈️"
-    if any(term in lower for term in ["cafe", "coffee", "small talk"]):
-        return "☕"
-    if any(term in lower for term in ["freeze", "nervous", "shy", "scared"]):
-        return "😬"
-    return "✨"
-
-
-def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
-    combined = f"{title}\n{script}\n{prompt}"
-    video_format = _classify_kayla_format(script, prompt, title)
-    hook = _extract_field(script, "Hook")
-    problem = _extract_field(script, "Problem")
-    solution = _extract_field(script, "Solution")
-    main_message = _extract_field(script, "Main message")
-
-    cards: list[KaylaCard] = []
-    corrections = _extract_correction_cards(combined)
-
-    if video_format == "mini_lesson":
-        cards.append(KaylaCard("⚠️", _short_title(hook, "Quick English fix"), (hook or "Stop saying it the hard way",), "hook"))
-        cards.extend(corrections[:5])
-        if not corrections:
-            cards.append(KaylaCard("❌", "Common mistake", ("This sounds translated",), "correction"))
-            cards.append(KaylaCard("✅", "Make it natural", ("Practice the better phrase out loud",), "correction"))
-        cards.append(KaylaCard("🔁", "Practice tip", ("Say the natural version twice",), "takeaway"))
-    elif video_format == "saloo_demo":
-        cards.append(KaylaCard("📱", _short_title(hook, "App speaking practice"), (hook or "Let the app correct you",), "hook"))
-        cards.append(KaylaCard("🎧", "Saloo feedback", ("Listen, repeat, improve",), "phone"))
-        if main_message:
-            cards.append(KaylaCard("🗣️", "Speaking practice", (_clean_text(main_message, 72),), "takeaway"))
-        if solution:
-            cards.append(KaylaCard("✅", "Better answer", (_clean_text(solution, 72),), "truth"))
-        cards.append(KaylaCard("✨", "Small correction", ("More confidence next time",), "takeaway"))
-    elif video_format == "myth_buster":
-        myth = hook if hook else "Watching English is enough"
-        truth = main_message or solution or "You need to answer out loud"
-        cards.append(KaylaCard("🚫", "Myth", (_clean_text(myth, 70),), "myth"))
-        cards.append(KaylaCard("✅", "Truth", (_clean_text(truth, 78),), "truth"))
-        cards.append(KaylaCard("🔁", "Real practice", ("Reply out loud before real life",), "takeaway"))
-    elif video_format == "specific_situation":
-        cards.append(KaylaCard(_topic_emoji(combined), _short_title(hook, "Real-life practice"), (hook or "Practice before real life",), "hook"))
-        if problem:
-            cards.append(KaylaCard("😬", "The problem", (_clean_text(problem, 72),), "myth"))
-        if main_message:
-            cards.append(KaylaCard("💬", "Real-life English", (_clean_text(main_message, 78),), "takeaway"))
-        if solution:
-            cards.append(KaylaCard("📱", "Practice inside Saloo", (_clean_text(solution, 78),), "phone"))
-    elif video_format == "confession":
-        cards.append(KaylaCard("😬", _short_title(hook, "English feels stuck?"), (hook or "You understand it... then freeze",), "hook"))
-        if problem:
-            cards.append(KaylaCard("💬", "Real learner problem", (_clean_text(problem, 78),), "takeaway"))
-        if solution:
-            cards.append(KaylaCard("📱", "Practice in Saloo", (_clean_text(solution, 78),), "phone"))
-        elif main_message:
-            cards.append(KaylaCard("🗣️", "Try this", (_clean_text(main_message, 78),), "takeaway"))
-        cards.append(KaylaCard("✨", "Practice helps", ("Confidence grows after repetition",), "takeaway"))
-    else:
-        cards.append(KaylaCard(_topic_emoji(combined), _short_title(hook, "Practice useful English"), (hook or "Small daily practice works",), "hook"))
-        if problem:
-            cards.append(KaylaCard("😬", "The problem", (_clean_text(problem, 72),), "myth"))
-        if main_message:
-            cards.append(KaylaCard("💬", "Real English", (_clean_text(main_message, 78),), "takeaway"))
-        if solution:
-            cards.append(KaylaCard("✅", "The fix", (_clean_text(solution, 72),), "truth"))
-        cards.append(KaylaCard("📱", "Saloo English", ("Practice before you need it",), "phone"))
-
-    deduped: list[KaylaCard] = []
-    seen: set[tuple[str, tuple[str, ...]]] = set()
-    for card in cards:
-        key = (card.title.lower(), tuple(line.lower() for line in card.lines))
-        if key not in seen:
-            deduped.append(card)
-            seen.add(key)
-        if len(deduped) >= MAX_CARDS:
-            break
-    return deduped
 
 
 def _emoji(codepoint: str) -> str:
@@ -338,8 +248,8 @@ def _topic_icon_v2(text: str) -> str:
 def _extract_correction_cards_v2(text: str) -> list[KaylaCard]:
     cards: list[KaylaCard] = []
     patterns = [
-        r"(?:don't|dont|do not|not)\s+say:?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;)\s*(?:say|say this|instead|natural):?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;|$)",
-        r"not:?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;)\s*say:?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;|$)",
+        r"(?:don't|dont|do not|not)\s+say:?\s*[\"'\u201c\u201d]?(.{2,70}?)[\"'\u201c\u201d]?(?:\.|\n|;)\s*(?:say|say this|instead|natural):?\s*[\"'\u201c\u201d]?(.{2,70}?)[\"'\u201c\u201d]?(?:\.|\n|;|$)",
+        r"not:?\s*[\"'\u201c\u201d]?(.{2,70}?)[\"'\u201c\u201d]?(?:\.|\n|;)\s*say:?\s*[\"'\u201c\u201d]?(.{2,70}?)[\"'\u201c\u201d]?(?:\.|\n|;|$)",
     ]
     for pattern in patterns:
         for wrong, right in re.findall(pattern, text, flags=re.IGNORECASE | re.DOTALL):
@@ -367,7 +277,7 @@ def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard
                 [
                     KaylaCard(E_WRONG, "Not natural", ("Textbook English",), "correction"),
                     KaylaCard(E_RIGHT, "Better", ("Real-life English",), "correction"),
-                    KaylaCard(E_SPEAK, "Say it out loud", ("That is the part most learners skip",), "takeaway"),
+                    KaylaCard(E_SPEAK, "Say it out loud", ("Most learners skip this part",), "takeaway"),
                 ]
             )
         cards.append(KaylaCard(E_REPEAT, "Practice tip", ("Repeat the better version twice",), "takeaway"))
@@ -387,22 +297,22 @@ def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard
     elif video_format == "specific_situation":
         cards = [
             KaylaCard(_topic_icon_v2(combined), "Real-life moment", ("This is where English matters",), "hook"),
-            KaylaCard(problem_icon, "The hard part", (problem_line,), "myth"),
-            KaylaCard(fix_icon, "Practice this first", (fix_line,), "truth"),
+            KaylaCard(problem_icon, "The hard part", (_card_line(problem_line, "You need real replies"),), "myth"),
+            KaylaCard(fix_icon, "Practice this first", (_card_line(fix_line, "Practice real replies"),), "truth"),
             KaylaCard(E_PHONE, "Before it happens", ("Warm up inside Saloo",), "phone"),
         ]
     elif video_format == "confession":
         cards = [
             KaylaCard(E_NERVOUS, "Before", ("I understood English...",), "hook"),
             KaylaCard(E_QUIET, "But then", ("My mouth froze",), "myth"),
-            KaylaCard(fix_icon, "What helped", (fix_line,), "truth"),
+            KaylaCard(fix_icon, "What helped", (_card_line(fix_line, "Practice before real life"),), "truth"),
             KaylaCard(E_SPARK, "After practice", ("Speaking felt less scary",), "takeaway"),
         ]
     else:
         cards = [
-            KaylaCard(problem_icon, "This is the problem", (problem_line,), "hook"),
+            KaylaCard(problem_icon, "This is the problem", (_card_line(problem_line, "You understand it..."),), "hook"),
             KaylaCard(E_CHAT, "Real English", ("You need replies, not random words",), "takeaway"),
-            KaylaCard(fix_icon, "The fix", (fix_line,), "truth"),
+            KaylaCard(fix_icon, "The fix", (_card_line(fix_line, "Practice real replies"),), "truth"),
             KaylaCard(E_PHONE, "Saloo English", ("Practice before you need it",), "phone"),
         ]
 
@@ -607,15 +517,21 @@ def _video_duration_seconds(ffmpeg: str, video_path: Path) -> float:
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
-def _card_windows(card_count: int, duration: float) -> list[tuple[float, float]]:
+def _card_windows(cards: list[KaylaCard], duration: float) -> list[tuple[float, float]]:
+    card_count = len(cards)
     if card_count <= 0:
         return []
-    start = 0.45
+    tones = {card.tone for card in cards}
+    start = 0.35 if "correction" in tones else 0.55
     active_duration = min(duration, CARD_MAX_SECONDS)
+    if "phone" in tones:
+        active_duration = min(duration, 10.8)
+    elif "correction" in tones:
+        active_duration = min(duration, 13.2)
     end_limit = max(start + 1.0, active_duration - 0.55)
     span = max(1.0, end_limit - start)
     slot = span / card_count
-    visible = min(2.6, max(1.35, slot * 0.82))
+    visible = min(2.4, max(1.2, slot * 0.78))
     return [(start + index * slot, min(start + index * slot + visible, end_limit)) for index in range(card_count)]
 
 
@@ -625,7 +541,7 @@ def overlay_cards(ffmpeg: str, source_video: Path, output_video: Path, cards: li
         return output_video
 
     duration = _video_duration_seconds(ffmpeg, source_video)
-    windows = _card_windows(len(cards), duration)
+    windows = _card_windows(cards, duration)
     card_paths = [render_card_png(card, work_dir / f"card_{index:02d}.png") for index, card in enumerate(cards, start=1)]
 
     cmd = [ffmpeg, "-y", "-i", str(source_video)]
@@ -911,7 +827,8 @@ def execute(target_date: str) -> int:
         )
         print(f"Kayla smart cards: {len(cards)}")
         for index, card in enumerate(cards, start=1):
-            print(f"  card_{index}: {card.emoji} {card.title} | {' / '.join(card.lines)}")
+            label, _, _ = _icon_style(card.emoji, card.tone)
+            print(f"  card_{index}: {label} {card.title} | {' / '.join(card.lines)}")
         final_path = render_final_video(source_path, work_dir / _output_name(selected), work_dir, cards)
         drive_url = upload_video_make_public(final_path, final_path.name)
         if not drive_url:
