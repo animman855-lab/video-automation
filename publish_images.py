@@ -13,6 +13,8 @@ from PIL import Image, ImageFilter
 UPLOAD_POST_PHOTO_ENDPOINT = "https://api.upload-post.com/api/upload_photos"
 EBOOK_LINK = "https://mybook.to/100EnglishMistakes"
 PINTEREST_PROFILE = "thefluentbuild"
+MIN_SUCCESSFUL_IMAGE_PLATFORMS = 1
+TIKTOK_TITLE_MAX_LENGTH = 85
 
 PINTEREST_BOARDS = {
     "oliviaa": "1108800439448657315",
@@ -162,6 +164,20 @@ def make_tiktok_image(source_path):
     return Path(output.name)
 
 
+def first_caption_line(caption):
+    return caption.splitlines()[0].strip() if caption.splitlines() else caption.strip()
+
+
+def truncate_clean(text, max_length):
+    text = " ".join(text.split())
+    if len(text) <= max_length:
+        return text
+    shortened = text[: max_length - 1].rstrip()
+    if " " in shortened:
+        shortened = shortened.rsplit(" ", 1)[0]
+    return shortened.rstrip(".,;:!?") + "…"
+
+
 def upload_photo_to_platform(image_path, avatar, caption, platform):
     normalized = platform.lower()
 
@@ -185,7 +201,7 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
             }
 
         else:
-            title_text = caption if normalized == "facebook" else caption.splitlines()[0][:100]
+            title_text = caption if normalized == "facebook" else first_caption_line(caption)[:100]
 
             data = {
                 "user": avatar,
@@ -199,7 +215,9 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
                 data["facebook_description"] = caption
 
             if normalized == "tiktok":
-                data["tiktok_title"] = caption.splitlines()[0][:100]
+                tiktok_title = truncate_clean(first_caption_line(caption), TIKTOK_TITLE_MAX_LENGTH)
+                data["title"] = tiktok_title
+                data["tiktok_title"] = tiktok_title
                 data["tiktok_description"] = caption
                 data["auto_add_music"] = "true"
 
@@ -234,7 +252,8 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
 
 
 def publish_to_upload_post(image_path, avatar, caption, platforms):
-    all_success = True
+    successes = 0
+    failures = 0
 
     for platform in platforms:
         tiktok_path = None
@@ -245,14 +264,17 @@ def publish_to_upload_post(image_path, avatar, caption, platforms):
             upload_path = tiktok_path
 
         try:
-            if not upload_photo_to_platform(upload_path, avatar, caption, platform):
-                all_success = False
+            if upload_photo_to_platform(upload_path, avatar, caption, platform):
+                successes += 1
+            else:
+                failures += 1
 
         finally:
             if tiktok_path:
                 tiktok_path.unlink(missing_ok=True)
 
-    return all_success
+    print(f"Image publish result: successes={successes} failures={failures}")
+    return successes >= MIN_SUCCESSFUL_IMAGE_PLATFORMS
 
 
 def mark_as_published(page_id):
