@@ -214,6 +214,13 @@ def synthesize_cindy_podcast_audios(lines: list, output_dir: Path) -> list[Path]
     return line_paths
 
 
+def synthesize_kayla_cta_audio(output_path: Path, text: str | None = None) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    token = _access_token()
+    cta = text or "Download Saloo English. Link in bio."
+    return _synthesize_text(_smooth_spoken_text(cta), output_path, token, voice_name="en-US-Neural2-F", speaking_rate=0.92)
+
+
 def synthesize_words(words: list[str], output_path: Path) -> Path:
     """Backward-compatible helper kept for older manual calls.
 

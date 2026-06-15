@@ -102,6 +102,38 @@ def query_ready_hyperframes_rows(publication_date: str, page_size: int = 20) -> 
     return response.json().get("results", [])
 
 
+def query_ready_kayla_flow_rows(publication_date: str, page_size: int = 20) -> list[dict]:
+    database_id = get_database_id()
+    payload = {
+        "filter": {
+            "and": [
+                {"property": "Avatar", "select": {"equals": "kayla"}},
+                {"property": "Video Type", "select": {"equals": "Visual Vocabulary"}},
+                {"property": "Statut", "select": {"equals": "A publier"}},
+                {"property": "Date Publication", "date": {"equals": publication_date}},
+                {"property": "Image HyperFrames", "url": {"is_not_empty": True}},
+                {"property": "Lien Video", "url": {"is_empty": True}},
+            ]
+        },
+        "sorts": [
+            {"property": "Slot", "direction": "ascending"},
+            {"property": "Titre", "direction": "ascending"},
+        ],
+        "page_size": page_size,
+    }
+
+    response = requests.post(
+        f"https://api.notion.com/v1/databases/{database_id}/query",
+        headers=_headers(),
+        json=payload,
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        raise NotionError(f"Notion query failed: {response.status_code} {response.text}")
+
+    return response.json().get("results", [])
+
+
 def patch_page(page_id: str, properties: dict) -> dict:
     response = requests.patch(
         f"https://api.notion.com/v1/pages/{page_id}",
@@ -120,6 +152,15 @@ def set_ready_to_publish(page_id: str, drive_url: str) -> dict:
         {
             "Lien Video": {"url": drive_url},
             "Statut": {"select": {"name": "A publier"}},
+        },
+    )
+
+
+def set_video_link(page_id: str, drive_url: str) -> dict:
+    return patch_page(
+        page_id,
+        {
+            "Lien Video": {"url": drive_url},
         },
     )
 
