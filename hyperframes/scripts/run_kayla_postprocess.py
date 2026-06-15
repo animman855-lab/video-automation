@@ -449,56 +449,143 @@ def _wrap_line(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, 
     return lines
 
 
+def _icon_style(symbol: str, tone: str) -> tuple[str, tuple[int, int, int], str]:
+    red = (246, 72, 92)
+    green = (34, 197, 94)
+    blue = (59, 130, 246)
+    amber = (245, 158, 11)
+    purple = (139, 92, 246)
+    slate = (55, 65, 81)
+
+    if symbol == E_WRONG or tone == "myth":
+        return "X", red, "square"
+    if symbol == E_RIGHT or tone == "truth" or tone == "correction":
+        return "✓", green, "square"
+    if symbol == E_PHONE or tone == "phone":
+        return "APP", blue, "pill"
+    if symbol == E_AUDIO:
+        return "AUDIO", purple, "pill"
+    if symbol == E_WARN:
+        return "!", amber, "circle"
+    if symbol == E_REPEAT:
+        return "REPEAT", green, "pill"
+    if symbol == E_SPEAK:
+        return "SAY", blue, "pill"
+    if symbol == E_WORK:
+        return "WORK", slate, "pill"
+    if symbol == E_TRAVEL:
+        return "TRAVEL", blue, "pill"
+    return "TIP", slate, "pill"
+
+
+def _line_without_emoji(text: str) -> str:
+    cleaned = text
+    for emoji in [
+        E_WARN,
+        E_WRONG,
+        E_RIGHT,
+        E_PHONE,
+        E_AUDIO,
+        E_SPEAK,
+        E_REPEAT,
+        E_SPARK,
+        E_MYTH,
+        E_NERVOUS,
+        E_CHAT,
+        E_WORK,
+        E_TRAVEL,
+        E_COFFEE,
+        E_BRAIN,
+        E_MELT,
+        E_BOOKS,
+        E_CLOCK,
+        E_QUIET,
+    ]:
+        cleaned = cleaned.replace(emoji, "")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _draw_icon(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    symbol: str,
+    color: tuple[int, int, int],
+    shape: str,
+    font: ImageFont.ImageFont,
+) -> int:
+    if shape == "circle":
+        draw.ellipse((x, y, x + 58, y + 58), fill=color)
+        label = symbol
+        width = 58
+    elif shape == "square":
+        draw.rounded_rectangle((x, y, x + 58, y + 58), radius=10, fill=color)
+        label = symbol
+        width = 58
+    else:
+        width = 118 if len(symbol) > 3 else 82
+        draw.rounded_rectangle((x, y, x + width, y + 58), radius=16, fill=color)
+        label = symbol
+    bbox = draw.textbbox((0, 0), label, font=font)
+    draw.text(
+        (x + (width - (bbox[2] - bbox[0])) // 2, y + (58 - (bbox[3] - bbox[1])) // 2 - 2),
+        label,
+        font=font,
+        fill=(255, 255, 255, 255),
+    )
+    return width
+
+
 def render_card_png(card: KaylaCard, output_path: Path) -> Path:
     image = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    title_font = _font(58, bold=True)
-    body_font = _font(54, bold=True)
-    compact_font = _font(46, bold=True)
+    text_font = _font(54, bold=True)
+    icon_font = _font(25, bold=True)
 
     def strip_text(raw: str, max_chars: int = 54) -> str:
-        return _clean_text(raw, max_chars)
+        return _clean_text(_line_without_emoji(raw), max_chars)
 
     if card.tone == "correction" and len(card.lines) >= 2:
-        strip_texts = [strip_text(card.lines[0], 46), strip_text(card.lines[1], 46)]
-        fonts = [body_font, body_font]
+        rows = [(E_WRONG, strip_text(card.lines[0], 44)), (E_RIGHT, strip_text(card.lines[1], 44))]
     elif card.tone in {"hook", "myth", "truth"}:
-        main = strip_text(card.lines[0] if card.lines else card.title, 58)
-        strip_texts = [strip_text(f"{card.emoji} {main}", 62)]
-        fonts = [title_font]
+        main = strip_text(card.lines[0] if card.lines else card.title, 50)
+        rows = [(card.emoji, main)]
     else:
-        main = strip_text(card.lines[0] if card.lines else card.title, 60)
-        strip_texts = [strip_text(f"{card.emoji} {card.title}", 44), main]
-        fonts = [compact_font, compact_font]
+        main = strip_text(card.lines[0] if card.lines else card.title, 48)
+        rows = [(card.emoji, main)]
 
-    max_strip_width = 900
-    strips: list[tuple[list[str], ImageFont.ImageFont, int, int]] = []
+    max_strip_width = 880
+    strips: list[tuple[str, str, tuple[int, int, int], str, int, int]] = []
     total_height = 0
-    for text, font in zip(strip_texts, fonts):
-        lines = _wrap_line(draw, text, font, max_strip_width - 82)[:2]
-        if len(lines) == 2 and len(lines[1]) > 34:
-            lines[1] = _clean_text(lines[1], 34)
-        text_width = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines)
-        text_height = sum(draw.textbbox((0, 0), line, font=font)[3] - draw.textbbox((0, 0), line, font=font)[1] for line in lines)
-        strip_width = min(max_strip_width, max(500, text_width + 92))
-        strip_height = max(88, text_height + 34 + (len(lines) - 1) * 8)
-        strips.append((lines, font, strip_width, strip_height))
+    for symbol, text in rows:
+        label, color, shape = _icon_style(symbol, card.tone)
+        icon_width = 118 if shape == "pill" and len(label) > 3 else 82
+        available_width = max_strip_width - icon_width - 62
+        lines = _wrap_line(draw, text, text_font, available_width)[:1]
+        line = lines[0] if lines else text
+        text_width = draw.textbbox((0, 0), line, font=text_font)[2]
+        strip_width = min(max_strip_width, max(570, icon_width + text_width + 96))
+        strip_height = 96
+        strips.append((label, line, color, shape, strip_width, strip_height))
         total_height += strip_height + 22
     total_height -= 22
 
-    y = 790 if card.tone in {"hook", "myth"} else 875
+    y = 820 if card.tone in {"hook", "myth"} else 910
     y = min(y, 1180 - total_height)
-    for lines, font, strip_width, strip_height in strips:
+    for label, line, color, shape, strip_width, strip_height in strips:
         x0 = (1080 - strip_width) // 2
         x1 = x0 + strip_width
         y1 = y + strip_height
-        draw.rounded_rectangle((x0 + 6, y + 7, x1 + 6, y1 + 7), radius=16, fill=(0, 0, 0, 105))
-        draw.rounded_rectangle((x0, y, x1, y1), radius=15, fill=(255, 255, 255, 245))
-        text_y = y + 18
-        for line in lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            draw.text(((1080 - (bbox[2] - bbox[0])) // 2, text_y), line, font=font, fill=(15, 18, 22, 255))
-            text_y += bbox[3] - bbox[1] + 8
+        draw.rounded_rectangle((x0 + 7, y + 8, x1 + 7, y1 + 8), radius=18, fill=(0, 0, 0, 95))
+        draw.rounded_rectangle((x0, y, x1, y1), radius=18, fill=(255, 255, 255, 248))
+
+        icon_x = x0 + 24
+        icon_y = y + 19
+        icon_width = _draw_icon(draw, icon_x, icon_y, label, color, shape, icon_font)
+
+        text_x = icon_x + icon_width + 24
+        bbox = draw.textbbox((0, 0), line, font=text_font)
+        draw.text((text_x, y + (strip_height - (bbox[3] - bbox[1])) // 2 - 5), line, font=text_font, fill=(14, 18, 24, 255))
         y = y1 + 22
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
