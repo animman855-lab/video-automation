@@ -7,11 +7,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
+from PIL import Image, ImageDraw, ImageFont
 
 from drive_client import check_drive_secrets, upload_video_make_public
 from notion_client import (
@@ -42,6 +44,16 @@ def repo_root() -> Path:
 
 
 OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp4"
+CANVAS_SIZE = (1080, 1920)
+MAX_CARDS = 7
+
+
+@dataclass(frozen=True)
+class KaylaCard:
+    emoji: str
+    title: str
+    lines: tuple[str, ...]
+    tone: str = "default"
 
 
 def toronto_now() -> datetime:
@@ -95,6 +107,280 @@ def download_source_video(source_url: str, output_path: Path) -> Path:
     return output_path
 
 
+def _clean_text(value: str, max_chars: int = 92) -> str:
+    text = re.sub(r"\s+", " ", value).strip(" .:-")
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rsplit(" ", 1)[0] + "..."
+
+
+def _extract_field(script: str, label: str) -> str:
+    labels = ["Hook", "Main message", "Problem", "Solution", "Ad message", "Visual direction", "CTA"]
+    other_labels = [item for item in labels if item.lower() != label.lower()]
+    boundary = "|".join(re.escape(item) + r":" for item in other_labels)
+    match = re.search(rf"{re.escape(label)}:\s*(.*?)(?=\s+(?:{boundary})|$)", script, re.IGNORECASE | re.DOTALL)
+    return _clean_text(match.group(1), 130) if match else ""
+
+
+def _classify_kayla_format(script: str, prompt: str, title: str) -> str:
+    combined = f"{title} {script} {prompt}".lower()
+    if re.search(r"\b(myth|truth)\b", combined):
+        return "myth_buster"
+    if "mini english lesson" in combined or re.search(r"(don't|dont|do not)\s+say", combined) or "not:" in combined:
+        return "mini_lesson"
+    if "voice-call" in combined or "voice call" in combined or ("phone" in combined and "correct" in combined):
+        return "saloo_demo"
+    if any(term in combined for term in ["job interview", "airport", "hotel", "dating", "meeting", "campus", "library", "phone call", "small talk"]):
+        return "specific_situation"
+    if any(term in combined for term in ["scared", "freeze", "nervous", "confidence", "confession", "overthinking"]):
+        return "confession"
+    return "face_camera_hook"
+
+
+def _extract_correction_cards(text: str) -> list[KaylaCard]:
+    cards: list[KaylaCard] = []
+    patterns = [
+        r"(?:don't|dont|do not|not)\s+say:?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;)\s*(?:say|say this|instead|natural):?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;|$)",
+        r"not:?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;)\s*say:?\s*[\"“]?(.{2,80}?)[\"”]?(?:\.|\n|;|$)",
+    ]
+    for pattern in patterns:
+        for wrong, right in re.findall(pattern, text, flags=re.IGNORECASE | re.DOTALL):
+            wrong = _clean_text(wrong, 58)
+            right = _clean_text(right, 58)
+            if wrong and right and wrong.lower() != right.lower():
+                cards.append(KaylaCard("✅", "Say it naturally", (f"❌ {wrong}", f"✅ {right}"), "correction"))
+            if len(cards) >= MAX_CARDS:
+                return cards
+    return cards
+
+
+def _topic_emoji(text: str) -> str:
+    lower = text.lower()
+    if any(term in lower for term in ["phone", "app", "saloo", "screen"]):
+        return "📱"
+    if any(term in lower for term in ["listen", "ear", "voice", "pronunciation"]):
+        return "🎧"
+    if any(term in lower for term in ["speak", "speaking", "conversation", "reply"]):
+        return "🗣️"
+    if any(term in lower for term in ["job", "work", "interview", "meeting"]):
+        return "💼"
+    if any(term in lower for term in ["travel", "airport", "hotel"]):
+        return "✈️"
+    if any(term in lower for term in ["cafe", "coffee", "small talk"]):
+        return "☕"
+    if any(term in lower for term in ["freeze", "nervous", "shy", "scared"]):
+        return "😬"
+    return "✨"
+
+
+def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
+    combined = f"{title}\n{script}\n{prompt}"
+    video_format = _classify_kayla_format(script, prompt, title)
+    hook = _extract_field(script, "Hook")
+    problem = _extract_field(script, "Problem")
+    solution = _extract_field(script, "Solution")
+    main_message = _extract_field(script, "Main message")
+
+    cards: list[KaylaCard] = []
+    corrections = _extract_correction_cards(combined)
+
+    if video_format == "mini_lesson":
+        cards.append(KaylaCard("⚠️", hook or "Stop saying it the hard way", ("Quick English fix",), "hook"))
+        cards.extend(corrections[:5])
+        if not corrections:
+            cards.append(KaylaCard("❌", "Common mistake", ("This sounds translated",), "correction"))
+            cards.append(KaylaCard("✅", "Make it natural", ("Practice the better phrase out loud",), "correction"))
+        cards.append(KaylaCard("🔁", "Practice tip", ("Say the natural version twice",), "takeaway"))
+    elif video_format == "saloo_demo":
+        cards.append(KaylaCard("📱", hook or "Let the app correct you", ("Practice like a real conversation",), "hook"))
+        cards.append(KaylaCard("🎧", "Saloo feedback", ("Listen, repeat, improve",), "phone"))
+        if main_message:
+            cards.append(KaylaCard("🗣️", "Speaking practice", (_clean_text(main_message, 72),), "takeaway"))
+        cards.append(KaylaCard("✨", "Small correction", ("More confidence next time",), "takeaway"))
+    elif video_format == "myth_buster":
+        myth = hook if hook else "Watching English is enough"
+        truth = main_message or solution or "You need to answer out loud"
+        cards.append(KaylaCard("🚫", "Myth", (_clean_text(myth, 70),), "myth"))
+        cards.append(KaylaCard("✅", "Truth", (_clean_text(truth, 78),), "truth"))
+        cards.append(KaylaCard("🔁", "Real practice", ("Reply out loud before real life",), "takeaway"))
+    elif video_format == "specific_situation":
+        cards.append(KaylaCard(_topic_emoji(combined), hook or "Practice before real life", ("One useful moment at a time",), "hook"))
+        if main_message:
+            cards.append(KaylaCard("💬", "Real-life English", (_clean_text(main_message, 78),), "takeaway"))
+        if solution:
+            cards.append(KaylaCard("📱", "Practice inside Saloo", (_clean_text(solution, 78),), "phone"))
+    elif video_format == "confession":
+        cards.append(KaylaCard("😬", hook or "English can feel stuck", ("You understand it... then freeze",), "hook"))
+        if problem:
+            cards.append(KaylaCard("💬", "Real learner problem", (_clean_text(problem, 78),), "takeaway"))
+        cards.append(KaylaCard("✨", "Practice helps", ("Confidence grows after repetition",), "takeaway"))
+    else:
+        cards.append(KaylaCard(_topic_emoji(combined), hook or "Practice useful English", ("Small daily practice works",), "hook"))
+        if main_message:
+            cards.append(KaylaCard("💬", "Real English", (_clean_text(main_message, 78),), "takeaway"))
+        cards.append(KaylaCard("📱", "Saloo English", ("Practice before you need it",), "phone"))
+
+    deduped: list[KaylaCard] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for card in cards:
+        key = (card.title.lower(), tuple(line.lower() for line in card.lines))
+        if key not in seen:
+            deduped.append(card)
+            seen.add(key)
+        if len(deduped) >= MAX_CARDS:
+            break
+    return deduped
+
+
+def _font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    candidates = [
+        r"C:\Windows\Fonts\seguiemj.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return ImageFont.truetype(candidate, size=size)
+    return ImageFont.load_default()
+
+
+def _wrap_line(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        width = draw.textbbox((0, 0), candidate, font=font)[2]
+        if width <= max_width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def render_card_png(card: KaylaCard, output_path: Path) -> Path:
+    image = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    title_font = _font(54, bold=True)
+    body_font = _font(48, bold=True)
+    small_font = _font(38)
+
+    max_width = 900
+    wrapped_lines: list[tuple[str, ImageFont.ImageFont]] = [(f"{card.emoji} {card.title}", title_font)]
+    for line in card.lines:
+        font = body_font if any(mark in line for mark in ["❌", "✅"]) else small_font
+        for wrapped in _wrap_line(draw, line, font, max_width - 90):
+            wrapped_lines.append((wrapped, font))
+
+    line_heights = [draw.textbbox((0, 0), text, font=font)[3] + 18 for text, font in wrapped_lines]
+    box_height = min(430, max(180, sum(line_heights) + 70))
+    box_width = max_width
+    x0 = (1080 - box_width) // 2
+    y0 = 1070 if card.tone not in {"hook", "myth"} else 900
+    x1 = x0 + box_width
+    y1 = y0 + box_height
+
+    border = {
+        "correction": (54, 218, 125, 230),
+        "phone": (83, 177, 255, 230),
+        "myth": (255, 91, 91, 230),
+        "truth": (54, 218, 125, 230),
+        "hook": (255, 255, 255, 220),
+    }.get(card.tone, (255, 255, 255, 210))
+
+    shadow = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rounded_rectangle((x0 + 8, y0 + 10, x1 + 8, y1 + 10), radius=34, fill=(0, 0, 0, 110))
+    image.alpha_composite(shadow)
+
+    draw.rounded_rectangle((x0, y0, x1, y1), radius=34, fill=(14, 20, 24, 218), outline=border, width=4)
+
+    y = y0 + 36
+    for text, font in wrapped_lines:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        draw.text(((1080 - (bbox[2] - bbox[0])) // 2, y), text, font=font, fill=(255, 255, 255, 255))
+        y += bbox[3] - bbox[1] + 18
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path)
+    return output_path
+
+
+def _video_duration_seconds(ffmpeg: str, video_path: Path) -> float:
+    completed = subprocess.run(
+        [ffmpeg, "-hide_banner", "-i", str(video_path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", completed.stderr)
+    if not match:
+        return 12.0
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def _card_windows(card_count: int, duration: float) -> list[tuple[float, float]]:
+    if card_count <= 0:
+        return []
+    start = 0.45
+    end_limit = max(start + 1.0, duration - 0.55)
+    span = max(1.0, end_limit - start)
+    slot = span / card_count
+    visible = min(2.6, max(1.35, slot * 0.82))
+    return [(start + index * slot, min(start + index * slot + visible, end_limit)) for index in range(card_count)]
+
+
+def overlay_cards(ffmpeg: str, source_video: Path, output_video: Path, cards: list[KaylaCard], work_dir: Path) -> Path:
+    if not cards:
+        shutil.copyfile(source_video, output_video)
+        return output_video
+
+    duration = _video_duration_seconds(ffmpeg, source_video)
+    windows = _card_windows(len(cards), duration)
+    card_paths = [render_card_png(card, work_dir / f"card_{index:02d}.png") for index, card in enumerate(cards, start=1)]
+
+    cmd = [ffmpeg, "-y", "-i", str(source_video)]
+    for path in card_paths:
+        cmd.extend(["-loop", "1", "-i", str(path)])
+
+    filters: list[str] = []
+    current = "[0:v]"
+    for index, ((start, end), _) in enumerate(zip(windows, card_paths), start=1):
+        next_label = f"[v{index}]"
+        filters.append(
+            f"{current}[{index}:v]overlay=0:0:enable='between(t,{start:.2f},{end:.2f})'{next_label}"
+        )
+        current = next_label
+
+    cmd.extend(
+        [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            current,
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            "-shortest",
+            str(output_video),
+        ]
+    )
+    _run_ffmpeg(cmd)
+    if not output_video.exists() or output_video.stat().st_size < 1024:
+        raise RuntimeError("Kayla card overlay video was not created correctly.")
+    return output_video
+
+
 def _run_ffmpeg(cmd: list[str]) -> None:
     completed = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if completed.returncode != 0:
@@ -111,11 +397,12 @@ def _video_has_audio(ffmpeg: str, video_path: Path) -> bool:
     return "Audio:" in completed.stderr
 
 
-def render_final_video(source_video: Path, output_video: Path, work_dir: Path) -> Path:
+def render_final_video(source_video: Path, output_video: Path, work_dir: Path, cards: list[KaylaCard]) -> Path:
     import imageio_ffmpeg
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     normalized_source = work_dir / "source_normalized.mp4"
+    source_with_cards = work_dir / "source_with_cards.mp4"
     normalized_outro = work_dir / "outro_normalized.mp4"
     concat_file = work_dir / "concat.txt"
 
@@ -174,6 +461,7 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path) -
             str(normalized_source),
         ]
     _run_ffmpeg(normalize_cmd)
+    overlay_cards(ffmpeg, normalized_source, source_with_cards, cards, work_dir / "cards")
 
     if _video_has_audio(ffmpeg, OUTRO_ASSET):
         outro_cmd = [
@@ -228,7 +516,7 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path) -
     _run_ffmpeg(outro_cmd)
 
     concat_file.write_text(
-        f"file '{normalized_source.as_posix()}'\nfile '{normalized_outro.as_posix()}'\n",
+        f"file '{source_with_cards.as_posix()}'\nfile '{normalized_outro.as_posix()}'\n",
         encoding="utf-8",
     )
     _run_ffmpeg(
@@ -321,7 +609,15 @@ def execute(target_date: str) -> int:
     work_dir = Path(tempfile.mkdtemp(prefix="kayla_postprocess_"))
     try:
         source_path = download_source_video(source_url, work_dir / "source_flow.mp4")
-        final_path = render_final_video(source_path, work_dir / _output_name(selected), work_dir)
+        cards = build_kayla_cards(
+            title=prop_text(props, "Titre"),
+            script=prop_text(props, "Script"),
+            prompt=prop_text(props, "Prompt 1"),
+        )
+        print(f"Kayla smart cards: {len(cards)}")
+        for index, card in enumerate(cards, start=1):
+            print(f"  card_{index}: {card.emoji} {card.title} | {' / '.join(card.lines)}")
+        final_path = render_final_video(source_path, work_dir / _output_name(selected), work_dir, cards)
         drive_url = upload_video_make_public(final_path, final_path.name)
         if not drive_url:
             raise RuntimeError("Google Drive upload returned an empty URL.")
