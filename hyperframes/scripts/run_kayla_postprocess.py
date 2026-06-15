@@ -46,6 +46,8 @@ def repo_root() -> Path:
 OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp4"
 CANVAS_SIZE = (1080, 1920)
 MAX_CARDS = 7
+CARD_MAX_SECONDS = 12.4
+APPEND_OUTRO_MAX_SOURCE_SECONDS = 15.5
 
 
 @dataclass(frozen=True)
@@ -205,6 +207,8 @@ def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
         cards.append(KaylaCard("🎧", "Saloo feedback", ("Listen, repeat, improve",), "phone"))
         if main_message:
             cards.append(KaylaCard("🗣️", "Speaking practice", (_clean_text(main_message, 72),), "takeaway"))
+        if solution:
+            cards.append(KaylaCard("✅", "Better answer", (_clean_text(solution, 72),), "truth"))
         cards.append(KaylaCard("✨", "Small correction", ("More confidence next time",), "takeaway"))
     elif video_format == "myth_buster":
         myth = hook if hook else "Watching English is enough"
@@ -214,6 +218,8 @@ def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
         cards.append(KaylaCard("🔁", "Real practice", ("Reply out loud before real life",), "takeaway"))
     elif video_format == "specific_situation":
         cards.append(KaylaCard(_topic_emoji(combined), _short_title(hook, "Real-life practice"), (hook or "Practice before real life",), "hook"))
+        if problem:
+            cards.append(KaylaCard("😬", "The problem", (_clean_text(problem, 72),), "myth"))
         if main_message:
             cards.append(KaylaCard("💬", "Real-life English", (_clean_text(main_message, 78),), "takeaway"))
         if solution:
@@ -222,11 +228,19 @@ def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
         cards.append(KaylaCard("😬", _short_title(hook, "English feels stuck?"), (hook or "You understand it... then freeze",), "hook"))
         if problem:
             cards.append(KaylaCard("💬", "Real learner problem", (_clean_text(problem, 78),), "takeaway"))
+        if solution:
+            cards.append(KaylaCard("📱", "Practice in Saloo", (_clean_text(solution, 78),), "phone"))
+        elif main_message:
+            cards.append(KaylaCard("🗣️", "Try this", (_clean_text(main_message, 78),), "takeaway"))
         cards.append(KaylaCard("✨", "Practice helps", ("Confidence grows after repetition",), "takeaway"))
     else:
         cards.append(KaylaCard(_topic_emoji(combined), _short_title(hook, "Practice useful English"), (hook or "Small daily practice works",), "hook"))
+        if problem:
+            cards.append(KaylaCard("😬", "The problem", (_clean_text(problem, 72),), "myth"))
         if main_message:
             cards.append(KaylaCard("💬", "Real English", (_clean_text(main_message, 78),), "takeaway"))
+        if solution:
+            cards.append(KaylaCard("✅", "The fix", (_clean_text(solution, 72),), "truth"))
         cards.append(KaylaCard("📱", "Saloo English", ("Practice before you need it",), "phone"))
 
     deduped: list[KaylaCard] = []
@@ -274,47 +288,54 @@ def _wrap_line(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, 
 def render_card_png(card: KaylaCard, output_path: Path) -> Path:
     image = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    title_font = _font(54, bold=True)
-    body_font = _font(48, bold=True)
-    small_font = _font(38)
+    title_font = _font(58, bold=True)
+    body_font = _font(54, bold=True)
+    compact_font = _font(46, bold=True)
 
-    max_width = 900
-    wrapped_lines: list[tuple[str, ImageFont.ImageFont]] = []
-    for wrapped in _wrap_line(draw, f"{card.emoji} {card.title}", title_font, max_width - 90):
-        wrapped_lines.append((wrapped, title_font))
-    for line in card.lines:
-        font = body_font if any(mark in line for mark in ["❌", "✅"]) else small_font
-        for wrapped in _wrap_line(draw, line, font, max_width - 90):
-            wrapped_lines.append((wrapped, font))
+    def strip_text(raw: str, max_chars: int = 54) -> str:
+        return _clean_text(raw, max_chars)
 
-    line_heights = [draw.textbbox((0, 0), text, font=font)[3] + 18 for text, font in wrapped_lines]
-    box_height = min(430, max(180, sum(line_heights) + 70))
-    box_width = max_width
-    x0 = (1080 - box_width) // 2
-    y0 = 1070 if card.tone not in {"hook", "myth"} else 900
-    x1 = x0 + box_width
-    y1 = y0 + box_height
+    if card.tone == "correction" and len(card.lines) >= 2:
+        strip_texts = [strip_text(card.lines[0], 46), strip_text(card.lines[1], 46)]
+        fonts = [body_font, body_font]
+    elif card.tone in {"hook", "myth", "truth"}:
+        main = strip_text(card.lines[0] if card.lines else card.title, 58)
+        strip_texts = [strip_text(f"{card.emoji} {main}", 62)]
+        fonts = [title_font]
+    else:
+        main = strip_text(card.lines[0] if card.lines else card.title, 60)
+        strip_texts = [strip_text(f"{card.emoji} {card.title}", 44), main]
+        fonts = [compact_font, compact_font]
 
-    border = {
-        "correction": (54, 218, 125, 230),
-        "phone": (83, 177, 255, 230),
-        "myth": (255, 91, 91, 230),
-        "truth": (54, 218, 125, 230),
-        "hook": (255, 255, 255, 220),
-    }.get(card.tone, (255, 255, 255, 210))
+    max_strip_width = 900
+    strips: list[tuple[list[str], ImageFont.ImageFont, int, int]] = []
+    total_height = 0
+    for text, font in zip(strip_texts, fonts):
+        lines = _wrap_line(draw, text, font, max_strip_width - 82)[:2]
+        if len(lines) == 2 and len(lines[1]) > 34:
+            lines[1] = _clean_text(lines[1], 34)
+        text_width = max(draw.textbbox((0, 0), line, font=font)[2] for line in lines)
+        text_height = sum(draw.textbbox((0, 0), line, font=font)[3] - draw.textbbox((0, 0), line, font=font)[1] for line in lines)
+        strip_width = min(max_strip_width, max(500, text_width + 92))
+        strip_height = max(88, text_height + 34 + (len(lines) - 1) * 8)
+        strips.append((lines, font, strip_width, strip_height))
+        total_height += strip_height + 22
+    total_height -= 22
 
-    shadow = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rounded_rectangle((x0 + 8, y0 + 10, x1 + 8, y1 + 10), radius=34, fill=(0, 0, 0, 110))
-    image.alpha_composite(shadow)
-
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=34, fill=(14, 20, 24, 218), outline=border, width=4)
-
-    y = y0 + 36
-    for text, font in wrapped_lines:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        draw.text(((1080 - (bbox[2] - bbox[0])) // 2, y), text, font=font, fill=(255, 255, 255, 255))
-        y += bbox[3] - bbox[1] + 18
+    y = 790 if card.tone in {"hook", "myth"} else 875
+    y = min(y, 1180 - total_height)
+    for lines, font, strip_width, strip_height in strips:
+        x0 = (1080 - strip_width) // 2
+        x1 = x0 + strip_width
+        y1 = y + strip_height
+        draw.rounded_rectangle((x0 + 6, y + 7, x1 + 6, y1 + 7), radius=16, fill=(0, 0, 0, 105))
+        draw.rounded_rectangle((x0, y, x1, y1), radius=15, fill=(255, 255, 255, 245))
+        text_y = y + 18
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            draw.text(((1080 - (bbox[2] - bbox[0])) // 2, text_y), line, font=font, fill=(15, 18, 22, 255))
+            text_y += bbox[3] - bbox[1] + 8
+        y = y1 + 22
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
@@ -339,7 +360,8 @@ def _card_windows(card_count: int, duration: float) -> list[tuple[float, float]]
     if card_count <= 0:
         return []
     start = 0.45
-    end_limit = max(start + 1.0, duration - 0.55)
+    active_duration = min(duration, CARD_MAX_SECONDS)
+    end_limit = max(start + 1.0, active_duration - 0.55)
     span = max(1.0, end_limit - start)
     slot = span / card_count
     visible = min(2.6, max(1.35, slot * 0.82))
@@ -473,6 +495,17 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
         ]
     _run_ffmpeg(normalize_cmd)
     overlay_cards(ffmpeg, normalized_source, source_with_cards, cards, work_dir / "cards")
+
+    normalized_source_duration = _video_duration_seconds(ffmpeg, normalized_source)
+    if normalized_source_duration >= APPEND_OUTRO_MAX_SOURCE_SECONDS:
+        print(
+            "Source video already looks longer than a raw Flow clip. "
+            "Skipping appended outro to avoid double outro."
+        )
+        shutil.copyfile(source_with_cards, output_video)
+        if not output_video.exists() or output_video.stat().st_size < 1024:
+            raise RuntimeError("Final Kayla video was not created correctly.")
+        return output_video
 
     if _video_has_audio(ffmpeg, OUTRO_ASSET):
         outro_cmd = [
