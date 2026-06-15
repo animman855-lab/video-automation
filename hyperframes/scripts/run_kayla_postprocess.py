@@ -12,7 +12,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
 
 from drive_client import check_drive_secrets, upload_video_make_public
 from notion_client import (
@@ -21,7 +20,6 @@ from notion_client import (
     query_ready_kayla_flow_rows,
     set_video_link,
 )
-from tts_google import check_tts_secrets, synthesize_kayla_cta_audio
 
 
 SLOT_HOURS = {
@@ -37,11 +35,13 @@ SLOT_HOURS = {
     "22:00": 22 * 60,
 }
 SLOT_WINDOW_MINUTES = 90
-CTA_TEXT = "Download Saloo English. Link in bio."
 
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp4"
 
 
 def toronto_now() -> datetime:
@@ -95,55 +95,6 @@ def download_source_video(source_url: str, output_path: Path) -> Path:
     return output_path
 
 
-def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = [
-        r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).exists():
-            return ImageFont.truetype(candidate, size=size)
-    return ImageFont.load_default()
-
-
-def _center_text(draw: ImageDraw.ImageDraw, y: int, text: str, font: ImageFont.ImageFont, fill: tuple[int, int, int]) -> None:
-    bbox = draw.textbbox((0, 0), text, font=font)
-    x = (1080 - (bbox[2] - bbox[0])) // 2
-    draw.text((x, y), text, font=font, fill=fill)
-
-
-def create_cta_card(output_path: Path) -> Path:
-    image = Image.new("RGB", (1080, 1920), (7, 20, 28))
-    draw = ImageDraw.Draw(image)
-
-    # Soft vertical gradient.
-    for y in range(1920):
-        green = int(20 + (y / 1920) * 32)
-        blue = int(28 + (y / 1920) * 24)
-        draw.line([(0, y), (1080, y)], fill=(7, green, blue))
-
-    title_font = _font(98, bold=True)
-    sub_font = _font(50)
-    small_font = _font(36)
-    button_font = _font(48, bold=True)
-
-    _center_text(draw, 520, "Saloo English", title_font, (255, 255, 255))
-    _center_text(draw, 650, "Practice real English", sub_font, (214, 241, 228))
-    _center_text(draw, 730, "without freezing.", sub_font, (214, 241, 228))
-
-    button_box = (210, 960, 870, 1080)
-    draw.rounded_rectangle(button_box, radius=46, fill=(42, 207, 125))
-    _center_text(draw, 994, "Download the app", button_font, (5, 22, 18))
-
-    _center_text(draw, 1180, "Link in bio", sub_font, (255, 255, 255))
-    _center_text(draw, 1540, "@salooenglish", small_font, (168, 214, 194))
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(output_path, quality=95)
-    return output_path
-
-
 def _run_ffmpeg(cmd: list[str]) -> None:
     completed = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if completed.returncode != 0:
@@ -165,10 +116,11 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path) -
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     normalized_source = work_dir / "source_normalized.mp4"
-    cta_image = create_cta_card(work_dir / "cta_card.jpg")
-    cta_audio = synthesize_kayla_cta_audio(work_dir / "cta.mp3", CTA_TEXT)
-    cta_video = work_dir / "cta_video.mp4"
+    normalized_outro = work_dir / "outro_normalized.mp4"
     concat_file = work_dir / "concat.txt"
+
+    if not OUTRO_ASSET.exists() or OUTRO_ASSET.stat().st_size < 1024:
+        raise RuntimeError(f"Missing Kayla outro asset: {OUTRO_ASSET}")
 
     source_has_audio = _video_has_audio(ffmpeg, source_video)
     if source_has_audio:
@@ -223,20 +175,14 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path) -
         ]
     _run_ffmpeg(normalize_cmd)
 
-    _run_ffmpeg(
-        [
+    if _video_has_audio(ffmpeg, OUTRO_ASSET):
+        outro_cmd = [
             ffmpeg,
             "-y",
-            "-loop",
-            "1",
             "-i",
-            str(cta_image),
-            "-i",
-            str(cta_audio),
-            "-t",
-            "4.5",
+            str(OUTRO_ASSET),
             "-vf",
-            "scale=1080:1920,setsar=1",
+            "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1",
             "-r",
             "30",
             "-c:v",
@@ -250,12 +196,39 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path) -
             "-ac",
             "2",
             "-shortest",
-            str(cta_video),
+            str(normalized_outro),
         ]
-    )
+    else:
+        outro_cmd = [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(OUTRO_ASSET),
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-vf",
+            "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1",
+            "-r",
+            "30",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-shortest",
+            str(normalized_outro),
+        ]
+    _run_ffmpeg(outro_cmd)
 
     concat_file.write_text(
-        f"file '{normalized_source.as_posix()}'\nfile '{cta_video.as_posix()}'\n",
+        f"file '{normalized_source.as_posix()}'\nfile '{normalized_outro.as_posix()}'\n",
         encoding="utf-8",
     )
     _run_ffmpeg(
@@ -319,7 +292,7 @@ def dry_run(target_date: str) -> int:
     print(f"Target date: {target_date}")
     print(f"Ready source row(s): {len(rows)}")
     print(f"Drive missing: {', '.join(check_drive_secrets()) or 'none'}")
-    print(f"TTS missing: {', '.join(check_tts_secrets()) or 'none'}")
+    print(f"Outro asset present: {OUTRO_ASSET.exists()}")
     if selected:
         _print_row(selected)
     else:
