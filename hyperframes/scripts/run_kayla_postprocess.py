@@ -255,6 +255,170 @@ def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
     return deduped
 
 
+def _emoji(codepoint: str) -> str:
+    return "".join(chr(int(part, 16)) for part in codepoint.split())
+
+
+E_WARN = _emoji("26A0 FE0F")
+E_WRONG = _emoji("274C")
+E_RIGHT = _emoji("2705")
+E_PHONE = _emoji("1F4F1")
+E_AUDIO = _emoji("1F3A7")
+E_SPEAK = _emoji("1F5E3 FE0F")
+E_REPEAT = _emoji("1F501")
+E_SPARK = _emoji("2728")
+E_MYTH = _emoji("1F6AB")
+E_NERVOUS = _emoji("1F62C")
+E_CHAT = _emoji("1F4AC")
+E_WORK = _emoji("1F4BC")
+E_TRAVEL = _emoji("2708 FE0F")
+E_COFFEE = _emoji("2615")
+E_BRAIN = _emoji("1F9E0")
+E_MELT = _emoji("1FAE0")
+E_BOOKS = _emoji("1F4DA")
+E_CLOCK = _emoji("23F1 FE0F")
+E_QUIET = _emoji("1F636")
+
+
+def _contains(text: str, words: list[str]) -> bool:
+    lower = text.lower()
+    return any(word in lower for word in words)
+
+
+def _card_problem(text: str) -> tuple[str, str]:
+    if _contains(text, ["translate", "translating"]):
+        return E_BRAIN, "You translate first..."
+    if _contains(text, ["freeze", "stuck", "mouth"]):
+        return E_NERVOUS, "You know the words..."
+    if _contains(text, ["forget", "forgetting", "remember"]):
+        return E_MELT, "You learn it... then forget it"
+    if _contains(text, ["random", "videos", "notes"]):
+        return E_BOOKS, "Random English is not enough"
+    if _contains(text, ["perfect", "grammar"]):
+        return E_WARN, "Perfect grammar can wait"
+    if _contains(text, ["busy", "minutes", "habit", "daily"]):
+        return E_CLOCK, "A few minutes can count"
+    if _contains(text, ["shy", "nervous", "scared"]):
+        return E_QUIET, "Private practice helps"
+    if _contains(text, ["job", "interview", "work", "meeting"]):
+        return E_WORK, "Practice before work English"
+    if _contains(text, ["airport", "hotel", "travel"]):
+        return E_TRAVEL, "Practice before travel"
+    return E_NERVOUS, "You understand it..."
+
+
+def _card_fix(text: str) -> tuple[str, str]:
+    if _contains(text, ["reply", "answer", "conversation"]):
+        return E_SPEAK, "Practice real replies"
+    if _contains(text, ["repeat", "listen", "voice", "pronunciation"]):
+        return E_AUDIO, "Listen. Repeat. Improve."
+    if _contains(text, ["mistake", "correct", "correction"]):
+        return E_RIGHT, "Fix small mistakes fast"
+    if _contains(text, ["habit", "daily", "minutes", "routine"]):
+        return E_REPEAT, "Tiny reps, every day"
+    if _contains(text, ["phrase", "phrases", "natural"]):
+        return E_CHAT, "Use phrases people say"
+    if _contains(text, ["confidence", "confident"]):
+        return E_SPARK, "Build speaking confidence"
+    return E_PHONE, "Practice inside Saloo"
+
+
+def _topic_icon_v2(text: str) -> str:
+    if _contains(text, ["job", "work", "interview", "meeting"]):
+        return E_WORK
+    if _contains(text, ["airport", "hotel", "travel"]):
+        return E_TRAVEL
+    if _contains(text, ["cafe", "coffee", "small talk"]):
+        return E_COFFEE
+    if _contains(text, ["phone", "app", "saloo", "screen"]):
+        return E_PHONE
+    return E_CHAT
+
+
+def _extract_correction_cards_v2(text: str) -> list[KaylaCard]:
+    cards: list[KaylaCard] = []
+    patterns = [
+        r"(?:don't|dont|do not|not)\s+say:?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;)\s*(?:say|say this|instead|natural):?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;|$)",
+        r"not:?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;)\s*say:?\s*[\"“]?(.{2,70}?)[\"”]?(?:\.|\n|;|$)",
+    ]
+    for pattern in patterns:
+        for wrong, right in re.findall(pattern, text, flags=re.IGNORECASE | re.DOTALL):
+            wrong = _clean_text(wrong, 44)
+            right = _clean_text(right, 44)
+            if wrong and right and wrong.lower() != right.lower():
+                cards.append(KaylaCard(E_RIGHT, "Say it naturally", (f"{E_WRONG} {wrong}", f"{E_RIGHT} {right}"), "correction"))
+            if len(cards) >= MAX_CARDS:
+                return cards
+    return cards
+
+
+def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard]:
+    combined = f"{title}\n{script}\n{prompt}"
+    video_format = _classify_kayla_format(script, prompt, title)
+    problem_icon, problem_line = _card_problem(combined)
+    fix_icon, fix_line = _card_fix(combined)
+    corrections = _extract_correction_cards_v2(combined)
+
+    if video_format == "mini_lesson":
+        cards = [KaylaCard(E_WARN, "Quick English fix", ("Stop sounding translated",), "hook")]
+        cards.extend(corrections[:5])
+        if not corrections:
+            cards.extend(
+                [
+                    KaylaCard(E_WRONG, "Not natural", ("Textbook English",), "correction"),
+                    KaylaCard(E_RIGHT, "Better", ("Real-life English",), "correction"),
+                    KaylaCard(E_SPEAK, "Say it out loud", ("That is the part most learners skip",), "takeaway"),
+                ]
+            )
+        cards.append(KaylaCard(E_REPEAT, "Practice tip", ("Repeat the better version twice",), "takeaway"))
+    elif video_format == "saloo_demo":
+        cards = [
+            KaylaCard(E_PHONE, "Real app practice", ("Talk like it is a voice call",), "hook"),
+            KaylaCard(E_AUDIO, "Saloo listens", ("Then corrects your sentence",), "phone"),
+            KaylaCard(E_RIGHT, "Try again", ("Shorter. Clearer. Natural.",), "truth"),
+            KaylaCard(E_SPEAK, "This is the point", ("Practice replying out loud",), "takeaway"),
+        ]
+    elif video_format == "myth_buster":
+        cards = [
+            KaylaCard(E_MYTH, "Myth", ("Watching English = speaking English",), "myth"),
+            KaylaCard(E_RIGHT, "Truth", ("You need to answer out loud",), "truth"),
+            KaylaCard(E_REPEAT, "Real practice", ("Rehearse before real conversations",), "takeaway"),
+        ]
+    elif video_format == "specific_situation":
+        cards = [
+            KaylaCard(_topic_icon_v2(combined), "Real-life moment", ("This is where English matters",), "hook"),
+            KaylaCard(problem_icon, "The hard part", (problem_line,), "myth"),
+            KaylaCard(fix_icon, "Practice this first", (fix_line,), "truth"),
+            KaylaCard(E_PHONE, "Before it happens", ("Warm up inside Saloo",), "phone"),
+        ]
+    elif video_format == "confession":
+        cards = [
+            KaylaCard(E_NERVOUS, "Before", ("I understood English...",), "hook"),
+            KaylaCard(E_QUIET, "But then", ("My mouth froze",), "myth"),
+            KaylaCard(fix_icon, "What helped", (fix_line,), "truth"),
+            KaylaCard(E_SPARK, "After practice", ("Speaking felt less scary",), "takeaway"),
+        ]
+    else:
+        cards = [
+            KaylaCard(problem_icon, "This is the problem", (problem_line,), "hook"),
+            KaylaCard(E_CHAT, "Real English", ("You need replies, not random words",), "takeaway"),
+            KaylaCard(fix_icon, "The fix", (fix_line,), "truth"),
+            KaylaCard(E_PHONE, "Saloo English", ("Practice before you need it",), "phone"),
+        ]
+
+    deduped: list[KaylaCard] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for card in cards:
+        key = (card.title.lower(), tuple(line.lower() for line in card.lines))
+        if key in seen:
+            continue
+        deduped.append(card)
+        seen.add(key)
+        if len(deduped) >= MAX_CARDS:
+            break
+    return deduped
+
+
 def _font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     candidates = [
         r"C:\Windows\Fonts\seguiemj.ttf",
@@ -653,7 +817,7 @@ def execute(target_date: str) -> int:
     work_dir = Path(tempfile.mkdtemp(prefix="kayla_postprocess_"))
     try:
         source_path = download_source_video(source_url, work_dir / "source_flow.mp4")
-        cards = build_kayla_cards(
+        cards = build_kayla_cards_v2(
             title=prop_text(props, "Titre"),
             script=prop_text(props, "Script"),
             prompt=prop_text(props, "Prompt 1"),
