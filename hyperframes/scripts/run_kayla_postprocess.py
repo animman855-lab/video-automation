@@ -114,6 +114,15 @@ def _clean_text(value: str, max_chars: int = 92) -> str:
     return text[: max_chars - 1].rsplit(" ", 1)[0] + "..."
 
 
+def _short_title(text: str, fallback: str, max_chars: int = 34) -> str:
+    cleaned = _clean_text(text, max_chars + 12)
+    if not cleaned:
+        return fallback
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return fallback
+
+
 def _extract_field(script: str, label: str) -> str:
     labels = ["Hook", "Main message", "Problem", "Solution", "Ad message", "Visual direction", "CTA"]
     other_labels = [item for item in labels if item.lower() != label.lower()]
@@ -185,14 +194,14 @@ def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
     corrections = _extract_correction_cards(combined)
 
     if video_format == "mini_lesson":
-        cards.append(KaylaCard("⚠️", hook or "Stop saying it the hard way", ("Quick English fix",), "hook"))
+        cards.append(KaylaCard("⚠️", _short_title(hook, "Quick English fix"), (hook or "Stop saying it the hard way",), "hook"))
         cards.extend(corrections[:5])
         if not corrections:
             cards.append(KaylaCard("❌", "Common mistake", ("This sounds translated",), "correction"))
             cards.append(KaylaCard("✅", "Make it natural", ("Practice the better phrase out loud",), "correction"))
         cards.append(KaylaCard("🔁", "Practice tip", ("Say the natural version twice",), "takeaway"))
     elif video_format == "saloo_demo":
-        cards.append(KaylaCard("📱", hook or "Let the app correct you", ("Practice like a real conversation",), "hook"))
+        cards.append(KaylaCard("📱", _short_title(hook, "App speaking practice"), (hook or "Let the app correct you",), "hook"))
         cards.append(KaylaCard("🎧", "Saloo feedback", ("Listen, repeat, improve",), "phone"))
         if main_message:
             cards.append(KaylaCard("🗣️", "Speaking practice", (_clean_text(main_message, 72),), "takeaway"))
@@ -204,18 +213,18 @@ def build_kayla_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
         cards.append(KaylaCard("✅", "Truth", (_clean_text(truth, 78),), "truth"))
         cards.append(KaylaCard("🔁", "Real practice", ("Reply out loud before real life",), "takeaway"))
     elif video_format == "specific_situation":
-        cards.append(KaylaCard(_topic_emoji(combined), hook or "Practice before real life", ("One useful moment at a time",), "hook"))
+        cards.append(KaylaCard(_topic_emoji(combined), _short_title(hook, "Real-life practice"), (hook or "Practice before real life",), "hook"))
         if main_message:
             cards.append(KaylaCard("💬", "Real-life English", (_clean_text(main_message, 78),), "takeaway"))
         if solution:
             cards.append(KaylaCard("📱", "Practice inside Saloo", (_clean_text(solution, 78),), "phone"))
     elif video_format == "confession":
-        cards.append(KaylaCard("😬", hook or "English can feel stuck", ("You understand it... then freeze",), "hook"))
+        cards.append(KaylaCard("😬", _short_title(hook, "English feels stuck?"), (hook or "You understand it... then freeze",), "hook"))
         if problem:
             cards.append(KaylaCard("💬", "Real learner problem", (_clean_text(problem, 78),), "takeaway"))
         cards.append(KaylaCard("✨", "Practice helps", ("Confidence grows after repetition",), "takeaway"))
     else:
-        cards.append(KaylaCard(_topic_emoji(combined), hook or "Practice useful English", ("Small daily practice works",), "hook"))
+        cards.append(KaylaCard(_topic_emoji(combined), _short_title(hook, "Practice useful English"), (hook or "Small daily practice works",), "hook"))
         if main_message:
             cards.append(KaylaCard("💬", "Real English", (_clean_text(main_message, 78),), "takeaway"))
         cards.append(KaylaCard("📱", "Saloo English", ("Practice before you need it",), "phone"))
@@ -270,7 +279,9 @@ def render_card_png(card: KaylaCard, output_path: Path) -> Path:
     small_font = _font(38)
 
     max_width = 900
-    wrapped_lines: list[tuple[str, ImageFont.ImageFont]] = [(f"{card.emoji} {card.title}", title_font)]
+    wrapped_lines: list[tuple[str, ImageFont.ImageFont]] = []
+    for wrapped in _wrap_line(draw, f"{card.emoji} {card.title}", title_font, max_width - 90):
+        wrapped_lines.append((wrapped, title_font))
     for line in card.lines:
         font = body_font if any(mark in line for mark in ["❌", "✅"]) else small_font
         for wrapped in _wrap_line(draw, line, font, max_width - 90):
