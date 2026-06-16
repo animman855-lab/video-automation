@@ -245,6 +245,116 @@ def _topic_icon_v2(text: str) -> str:
     return E_CHAT
 
 
+def _is_visual_direction(text: str) -> bool:
+    lower = text.lower()
+    visual_terms = [
+        "vertical 9:16",
+        "ugc tiktok",
+        "iphone quality",
+        "natural light",
+        "no text overlay",
+        "no captions",
+        "no futuristic",
+        "no robotic",
+        "camera",
+        "background",
+        "bedroom",
+        "hotel room",
+        "campus library",
+        "visual direction",
+        "style:",
+        "scene:",
+        "decor:",
+        "prompt:",
+    ]
+    return any(term in lower for term in visual_terms)
+
+
+def _spoken_parts_from_script(script: str) -> list[str]:
+    parts: list[str] = []
+    normalized = re.sub(
+        r"\s+(hook|problem|solution|main message|ad message|script|kayla|saloo|voice|app|narrator|cta|visual direction|image prompt|prompt 1|scene|camera|style)\s*:",
+        r"\n\1:",
+        script,
+        flags=re.IGNORECASE,
+    )
+    for raw_line in re.split(r"[\n\r]+", normalized):
+        line = raw_line.replace("\u2022", " ").strip(" -\t")
+        if not line:
+            continue
+        if _is_visual_direction(line):
+            continue
+        if re.match(r"^(cta|visual direction|image prompt|prompt 1|scene|camera|style)\s*:", line, re.IGNORECASE):
+            continue
+        line = re.sub(
+            r"^(hook|problem|solution|main message|ad message|script|kayla|saloo|voice|app|narrator)\s*:\s*",
+            "",
+            line,
+            flags=re.IGNORECASE,
+        ).strip()
+        line = line.strip("\"'")
+        if not line or _is_visual_direction(line):
+            continue
+        parts.extend(piece.strip() for piece in re.split(r"(?<=[.!?])\s+|;\s+", line) if piece.strip())
+    return parts
+
+
+def _subtitle_chunks(script: str, max_cards: int = MAX_CARDS) -> list[str]:
+    chunks: list[str] = []
+    for part in _spoken_parts_from_script(script):
+        words = part.split()
+        if not words:
+            continue
+        if len(" ".join(words)) <= 56:
+            chunks.append(" ".join(words))
+            if len(chunks) >= max_cards:
+                return chunks
+            continue
+        chunk_count = max(2, min(4, (len(words) + 6) // 7))
+        chunk_size = max(4, (len(words) + chunk_count - 1) // chunk_count)
+        index = 0
+        while index < len(words):
+            take = min(chunk_size, len(words) - index)
+            candidate_words = words[index : index + take]
+            while len(" ".join(candidate_words)) > 56 and len(candidate_words) > 3:
+                candidate_words = candidate_words[:-1]
+            chunks.append(" ".join(candidate_words))
+            index += len(candidate_words)
+            if len(chunks) >= max_cards:
+                return chunks
+    return [_clean_text(chunk, 56) for chunk in chunks if chunk]
+
+
+def _subtitle_icon(text: str) -> str:
+    lower = text.lower()
+    if any(term in lower for term in ["don't say", "dont say", "do not say", "not:", "mistake", "wrong"]):
+        return E_WRONG
+    if any(term in lower for term in ["say", "better", "natural", "correct"]):
+        return E_RIGHT
+    if any(term in lower for term in ["saloo", "app", "phone"]):
+        return E_PHONE
+    if any(term in lower for term in ["speak", "speaking", "reply", "conversation"]):
+        return E_SPEAK
+    if any(term in lower for term in ["listen", "pronunciation", "voice"]):
+        return E_AUDIO
+    return E_CHAT
+
+
+def _subtitle_cards(script: str) -> list[KaylaCard]:
+    cards: list[KaylaCard] = []
+    for chunk in _subtitle_chunks(script):
+        icon = _subtitle_icon(chunk)
+        tone = "subtitle"
+        if icon == E_WRONG:
+            tone = "myth"
+        elif icon == E_RIGHT:
+            tone = "truth"
+        elif icon == E_PHONE:
+            tone = "phone"
+        cards.append(KaylaCard(icon, "Script card", (chunk,), tone))
+    return cards[:MAX_CARDS]
+
+
 def _extract_correction_cards_v2(text: str) -> list[KaylaCard]:
     cards: list[KaylaCard] = []
     patterns = [
@@ -256,7 +366,7 @@ def _extract_correction_cards_v2(text: str) -> list[KaylaCard]:
             wrong = _clean_text(wrong, 44)
             right = _clean_text(right, 44)
             if wrong and right and wrong.lower() != right.lower():
-                cards.append(KaylaCard(E_RIGHT, "Say it naturally", (f"{E_WRONG} {wrong}", f"{E_RIGHT} {right}"), "correction"))
+                cards.append(KaylaCard(E_RIGHT, "Say it naturally", (wrong, right), "correction"))
             if len(cards) >= MAX_CARDS:
                 return cards
     return cards
@@ -268,6 +378,25 @@ def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard
     problem_icon, problem_line = _card_problem(combined)
     fix_icon, fix_line = _card_fix(combined)
     corrections = _extract_correction_cards_v2(combined)
+    subtitle_cards = _subtitle_cards(script)
+
+    if subtitle_cards:
+        if video_format == "mini_lesson" and corrections:
+            cards = corrections[:MAX_CARDS]
+        else:
+            cards = subtitle_cards
+        deduped: list[KaylaCard] = []
+        seen_lines: set[str] = set()
+        for card in cards:
+            line_key = " ".join(card.lines).lower()
+            if line_key in seen_lines:
+                continue
+            deduped.append(card)
+            seen_lines.add(line_key)
+            if len(deduped) >= MAX_CARDS:
+                break
+        if len(deduped) >= 2:
+            return deduped
 
     if video_format == "mini_lesson":
         cards = [KaylaCard(E_WARN, "Quick English fix", ("Stop sounding translated",), "hook")]
@@ -375,6 +504,8 @@ def _icon_style(symbol: str, tone: str) -> tuple[str, tuple[int, int, int], str]
         return "APP", blue, "pill"
     if symbol == E_AUDIO:
         return "AUDIO", purple, "pill"
+    if symbol == E_CHAT or tone == "subtitle":
+        return "TEXT", blue, "pill"
     if symbol == E_WARN:
         return "!", amber, "circle"
     if symbol == E_REPEAT:
@@ -457,32 +588,33 @@ def render_card_png(card: KaylaCard, output_path: Path) -> Path:
 
     if card.tone == "correction" and len(card.lines) >= 2:
         rows = [(E_WRONG, strip_text(card.lines[0], 44)), (E_RIGHT, strip_text(card.lines[1], 44))]
-    elif card.tone in {"hook", "myth", "truth"}:
-        main = strip_text(card.lines[0] if card.lines else card.title, 50)
+    elif card.tone in {"hook", "myth", "truth", "subtitle"}:
+        main = strip_text(card.lines[0] if card.lines else card.title, 56)
         rows = [(card.emoji, main)]
     else:
-        main = strip_text(card.lines[0] if card.lines else card.title, 48)
+        main = strip_text(card.lines[0] if card.lines else card.title, 56)
         rows = [(card.emoji, main)]
 
     max_strip_width = 900
-    strips: list[tuple[str, str, tuple[int, int, int], str, int, int]] = []
+    strips: list[tuple[str, list[str], tuple[int, int, int], str, int, int]] = []
     total_height = 0
     for symbol, text in rows:
         label, color, shape = _icon_style(symbol, card.tone)
         icon_width = 128 if shape == "pill" and len(label) > 3 else 88
         available_width = max_strip_width - icon_width - 78
-        lines = _wrap_line(draw, text, text_font, available_width)[:1]
-        line = lines[0] if lines else text
-        text_width = draw.textbbox((0, 0), line, font=text_font)[2]
+        wrapped_lines = _wrap_line(draw, text, text_font, available_width)[:2]
+        if not wrapped_lines:
+            wrapped_lines = [text]
+        text_width = max(draw.textbbox((0, 0), line, font=text_font)[2] for line in wrapped_lines)
         strip_width = min(max_strip_width, max(620, icon_width + text_width + 118))
-        strip_height = 104
-        strips.append((label, line, color, shape, strip_width, strip_height))
+        strip_height = 104 if len(wrapped_lines) == 1 else 154
+        strips.append((label, wrapped_lines, color, shape, strip_width, strip_height))
         total_height += strip_height + 18
     total_height -= 18
 
     y = 760 if card.tone in {"hook", "myth"} else 850
     y = min(y, 1120 - total_height)
-    for label, line, color, shape, strip_width, strip_height in strips:
+    for label, wrapped_lines, color, shape, strip_width, strip_height in strips:
         x0 = (1080 - strip_width) // 2
         x1 = x0 + strip_width
         y1 = y + strip_height
@@ -494,8 +626,12 @@ def render_card_png(card: KaylaCard, output_path: Path) -> Path:
         icon_width = _draw_icon(draw, icon_x, icon_y, label, color, shape, icon_font)
 
         text_x = icon_x + icon_width + 26
-        bbox = draw.textbbox((0, 0), line, font=text_font)
-        draw.text((text_x, y + (strip_height - (bbox[3] - bbox[1])) // 2 - 5), line, font=text_font, fill=(14, 18, 24, 255))
+        line_height = 54
+        text_block_height = len(wrapped_lines) * line_height
+        text_y = y + (strip_height - text_block_height) // 2 - 5
+        for line in wrapped_lines:
+            draw.text((text_x, text_y), line, font=text_font, fill=(14, 18, 24, 255))
+            text_y += line_height
         y = y1 + 18
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
