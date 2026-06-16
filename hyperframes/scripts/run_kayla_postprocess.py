@@ -372,6 +372,33 @@ def _subtitle_cards(script: str) -> list[KaylaCard]:
     return cards[:MAX_CARDS]
 
 
+def _explicit_card_lines(script: str) -> list[str]:
+    lines: list[tuple[int, str]] = []
+    pattern = r"(?:^|\n)\s*Card\s*(\d{1,2})\s*:\s*(.*?)(?=\n\s*Card\s*\d{1,2}\s*:|\n\s*(?:Hook|Problem|Solution|Main message|Ad message|CTA|Visual direction|Prompt 1|Image prompt)\s*:|$)"
+    for number, text in re.findall(pattern, script or "", flags=re.IGNORECASE | re.DOTALL):
+        cleaned = _card_line(text, "", 64)
+        if cleaned and not _is_visual_direction(cleaned):
+            lines.append((int(number), cleaned))
+    return [text for _, text in sorted(lines, key=lambda item: item[0])][:MAX_CARDS]
+
+
+def _explicit_cards(script: str) -> list[KaylaCard]:
+    cards: list[KaylaCard] = []
+    for line in _explicit_card_lines(script):
+        icon = _subtitle_icon(line)
+        tone = "tip"
+        if icon == E_WRONG:
+            tone = "stop"
+        elif icon == E_RIGHT:
+            tone = "fix"
+        elif icon == E_PHONE:
+            tone = "app"
+        elif icon == E_AUDIO:
+            tone = "try"
+        cards.append(KaylaCard(icon, "Card", (line,), tone))
+    return cards
+
+
 def _extract_correction_cards_v2(text: str) -> list[KaylaCard]:
     cards: list[KaylaCard] = []
     patterns = [
@@ -517,6 +544,10 @@ def _editorial_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
 
 def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard]:
     combined = f"{title}\n{script}\n{prompt}"
+    explicit_cards = _explicit_cards(script)
+    if len(explicit_cards) >= 2:
+        return explicit_cards
+
     video_format = _classify_kayla_format(script, prompt, title)
     problem_icon, problem_line = _card_problem(combined)
     fix_icon, fix_line = _card_fix(combined)
