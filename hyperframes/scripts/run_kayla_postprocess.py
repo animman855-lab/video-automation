@@ -116,9 +116,18 @@ def _clean_text(value: str, max_chars: int = 92) -> str:
     return text[: max_chars - 1].rsplit(" ", 1)[0] + "..."
 
 
+def _strip_card_label(value: str) -> str:
+    return re.sub(
+        r"^\s*(hook|problem|solution|main message|ad message|script|cta|visual direction|prompt 1|image prompt)\s*:\s*",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def _card_line(value: str, fallback: str, max_chars: int = 42) -> str:
     text = _clean_text(value, max_chars + 18)
-    text = re.sub(r"^(hook|problem|solution|main message|cta):\s*", "", text, flags=re.IGNORECASE)
+    text = _strip_card_label(text)
     text = text.strip(" \"'")
     if not text:
         return fallback
@@ -266,6 +275,7 @@ def _is_visual_direction(text: str) -> bool:
         "scene:",
         "decor:",
         "prompt:",
+        "ad style",
     ]
     return any(term in lower for term in visual_terms)
 
@@ -282,17 +292,24 @@ def _spoken_parts_from_script(script: str) -> list[str]:
         line = raw_line.replace("\u2022", " ").strip(" -\t")
         if not line:
             continue
-        if _is_visual_direction(line):
-            continue
-        if re.match(r"^(cta|visual direction|image prompt|prompt 1|scene|camera|style)\s*:", line, re.IGNORECASE):
-            continue
         line = re.sub(
             r"^(hook|problem|solution|main message|ad message|script|kayla|saloo|voice|app|narrator)\s*:\s*",
             "",
             line,
             flags=re.IGNORECASE,
         ).strip()
+        line = re.sub(
+            r"^kayla speaks in .*?ad style\s+(for|to)\s+",
+            "This is for ",
+            line,
+            flags=re.IGNORECASE,
+        )
+        line = re.sub(r"^kayla speaks\s+", "", line, flags=re.IGNORECASE)
         line = line.strip("\"'")
+        if _is_visual_direction(line):
+            continue
+        if re.match(r"^(cta|visual direction|image prompt|prompt 1|scene|camera|style)\s*:", line, re.IGNORECASE):
+            continue
         if not line or _is_visual_direction(line):
             continue
         parts.extend(piece.strip() for piece in re.split(r"(?<=[.!?])\s+|;\s+", line) if piece.strip())
@@ -372,31 +389,141 @@ def _extract_correction_cards_v2(text: str) -> list[KaylaCard]:
     return cards
 
 
+def _field_value(script: str, label: str) -> str:
+    value = _extract_field(script, label)
+    if value and not _is_visual_direction(value):
+        return value
+    return ""
+
+
+def _first_spoken_part(script: str) -> str:
+    for part in _spoken_parts_from_script(script):
+        cleaned = _card_line(part, "", 54)
+        if cleaned and not _is_visual_direction(cleaned):
+            return cleaned
+    return ""
+
+
+def _punchline(value: str, fallback: str, max_chars: int = 54) -> str:
+    text = _card_line(value, fallback, max_chars)
+    text = re.sub(r"^(this is for anyone who wants to|this is for learners who want to)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^kayla speaks in .*?ad style\s+(for|to)\s+", "This is for ", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(kayla speaks|kayla says)\s+", "", text, flags=re.IGNORECASE)
+    text = text.strip(" .")
+    if not text:
+        return fallback
+    return text[0].upper() + text[1:]
+
+
+def _problem_card_line(combined: str, script: str) -> str:
+    problem = _field_value(script, "Problem")
+    if problem:
+        return _punchline(problem, "You understand English, then freeze")
+    if _contains(combined, ["small mistake", "mistakes", "sound less natural"]):
+        return "Small mistakes can sound less natural"
+    if _contains(combined, ["starting strong", "stopping after", "few days"]):
+        return "Starting is easy. Staying consistent is hard"
+    if _contains(combined, ["freeze", "stuck", "mouth"]):
+        return "You know the words, then freeze"
+    if _contains(combined, ["translate", "translating"]):
+        return "Translating first slows you down"
+    if _contains(combined, ["confidence", "scared", "nervous"]):
+        return "Confidence needs real practice"
+    return _punchline(_first_spoken_part(script), "You need real speaking practice")
+
+
+def _benefit_card_line(combined: str, script: str) -> str:
+    solution = _field_value(script, "Solution") or _field_value(script, "Main message")
+    if solution:
+        if _contains(solution, ["saloo", "real conversations", "real conversation"]):
+            return "Practice real replies before real conversations"
+        return _punchline(solution, "Practice real replies before real life")
+    if _contains(combined, ["natural", "phrases", "phrase"]):
+        return "Use phrases people actually say"
+    if _contains(combined, ["small repeatable lessons", "daily habit"]):
+        return "Small repeatable lessons build the habit"
+    if _contains(combined, ["reply", "answer", "conversation"]):
+        return "Practice replies before real conversations"
+    if _contains(combined, ["pronunciation", "listen", "voice"]):
+        return "Listen, repeat, and improve"
+    return "Practice real replies before you need them"
+
+
+def _editorial_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
+    combined = f"{title}\n{script}\n{prompt}"
+    video_format = _classify_kayla_format(script, prompt, title)
+    corrections = _extract_correction_cards_v2(combined)
+    hook = _field_value(script, "Hook")
+    problem = _problem_card_line(combined, script)
+    benefit = _benefit_card_line(combined, script)
+
+    if video_format == "mini_lesson":
+        cards = corrections[:3]
+        if not cards:
+            cards = [
+                KaylaCard(E_WRONG, "Stop", ("This sounds translated",), "stop"),
+                KaylaCard(E_RIGHT, "Fix", ("Use the natural phrase",), "fix"),
+            ]
+        cards.append(KaylaCard(E_SPEAK, "Try", ("Say the better version out loud",), "try"))
+    elif video_format == "saloo_demo":
+        cards = [
+            KaylaCard(E_WARN, "Why", (problem,), "why"),
+            KaylaCard(E_PHONE, "App", ("Practice the reply in Saloo",), "app"),
+            KaylaCard(E_RIGHT, "Fix", (benefit,), "fix"),
+            KaylaCard(E_SPEAK, "Try", ("Repeat it before real life",), "try"),
+        ]
+    elif video_format == "myth_buster":
+        cards = [
+            KaylaCard(E_WRONG, "Stop", (_punchline(hook, "Watching is not enough"),), "stop"),
+            KaylaCard(E_RIGHT, "Fix", (benefit,), "fix"),
+            KaylaCard(E_PHONE, "App", ("Practice out loud in Saloo",), "app"),
+        ]
+    elif video_format == "confession":
+        cards = [
+            KaylaCard(E_NERVOUS, "Why", (problem,), "why"),
+            KaylaCard(E_PHONE, "App", ("Practice privately first",), "app"),
+            KaylaCard(E_SPARK, "Try", ("Build confidence before speaking",), "try"),
+        ]
+    elif video_format == "specific_situation":
+        cards = [
+            KaylaCard(_topic_icon_v2(combined), "Tip", (_punchline(hook, "Practice before the real moment"),), "tip"),
+            KaylaCard(E_WARN, "Why", (problem,), "why"),
+            KaylaCard(E_PHONE, "App", ("Warm up inside Saloo first",), "app"),
+            KaylaCard(E_RIGHT, "Fix", (benefit,), "fix"),
+        ]
+    else:
+        first_line = _first_spoken_part(script)
+        cards = [
+            KaylaCard(E_CHAT, "Tip", (_punchline(hook or first_line, "This is for real conversations"),), "tip"),
+            KaylaCard(E_WARN, "Why", (problem,), "why"),
+            KaylaCard(E_PHONE, "App", ("Practice inside Saloo English",), "app"),
+            KaylaCard(E_RIGHT, "Fix", (benefit,), "fix"),
+        ]
+
+    deduped: list[KaylaCard] = []
+    seen: set[str] = set()
+    banned = ["kayla ads concept", "script card", "prompt", "visual direction"]
+    for card in cards:
+        lines = tuple(_punchline(line, "", 56) for line in card.lines)
+        joined = " ".join(lines).lower()
+        if not joined or joined in seen or any(term in joined for term in banned):
+            continue
+        deduped.append(KaylaCard(card.emoji, card.title, lines, card.tone))
+        seen.add(joined)
+        if len(deduped) >= MAX_CARDS:
+            break
+    return deduped
+
+
 def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard]:
     combined = f"{title}\n{script}\n{prompt}"
     video_format = _classify_kayla_format(script, prompt, title)
     problem_icon, problem_line = _card_problem(combined)
     fix_icon, fix_line = _card_fix(combined)
     corrections = _extract_correction_cards_v2(combined)
-    subtitle_cards = _subtitle_cards(script)
-
-    if subtitle_cards:
-        if video_format == "mini_lesson" and corrections:
-            cards = corrections[:MAX_CARDS]
-        else:
-            cards = subtitle_cards
-        deduped: list[KaylaCard] = []
-        seen_lines: set[str] = set()
-        for card in cards:
-            line_key = " ".join(card.lines).lower()
-            if line_key in seen_lines:
-                continue
-            deduped.append(card)
-            seen_lines.add(line_key)
-            if len(deduped) >= MAX_CARDS:
-                break
-        if len(deduped) >= 2:
-            return deduped
+    editorial_cards = _editorial_cards(title, script, prompt)
+    if len(editorial_cards) >= 2:
+        return editorial_cards
 
     if video_format == "mini_lesson":
         cards = [KaylaCard(E_WARN, "Quick English fix", ("Stop sounding translated",), "hook")]
@@ -496,6 +623,18 @@ def _icon_style(symbol: str, tone: str) -> tuple[str, tuple[int, int, int], str]
     purple = (139, 92, 246)
     slate = (55, 65, 81)
 
+    if tone == "stop" or symbol == E_WRONG or tone == "myth":
+        return "STOP", red, "pill"
+    if tone == "fix":
+        return "FIX", green, "pill"
+    if tone == "why":
+        return "WHY", amber, "pill"
+    if tone == "try":
+        return "TRY", blue, "pill"
+    if tone == "tip":
+        return "TIP", blue, "pill"
+    if tone == "app":
+        return "APP", blue, "pill"
     if symbol == E_WRONG or tone == "myth":
         return "X", red, "square"
     if symbol == E_RIGHT or tone == "truth" or tone == "correction":
@@ -505,7 +644,7 @@ def _icon_style(symbol: str, tone: str) -> tuple[str, tuple[int, int, int], str]
     if symbol == E_AUDIO:
         return "AUDIO", purple, "pill"
     if symbol == E_CHAT or tone == "subtitle":
-        return "TEXT", blue, "pill"
+        return "TIP", blue, "pill"
     if symbol == E_WARN:
         return "!", amber, "circle"
     if symbol == E_REPEAT:
@@ -584,7 +723,7 @@ def render_card_png(card: KaylaCard, output_path: Path) -> Path:
     icon_font = _font(24, bold=True)
 
     def strip_text(raw: str, max_chars: int = 54) -> str:
-        return _clean_text(_line_without_emoji(raw), max_chars)
+        return _clean_text(_strip_card_label(_line_without_emoji(raw)), max_chars)
 
     if card.tone == "correction" and len(card.lines) >= 2:
         rows = [(E_WRONG, strip_text(card.lines[0], 44)), (E_RIGHT, strip_text(card.lines[1], 44))]
