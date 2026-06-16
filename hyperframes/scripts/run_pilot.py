@@ -13,6 +13,7 @@ import pytz
 
 from dialogue_parser import parse_dialogue_script
 from drive_client import check_drive_secrets, upload_video_make_public
+from image_analyzer import ImageAnalysisError, analyze_vocabulary_labels_ocr
 from notion_client import (
     load_local_env,
     prop_text,
@@ -194,8 +195,19 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     require_tts_budget(script, limits)
 
     image_path = download_image(image_url, work_dir / "source_image")
-    item_targets = _teacher_ryan_fixed_targets(items)
-    print("TeacherRyan fixed 2x5 arrow targets enabled. Image analysis is not required.")
+    target_mode = os.getenv("TEACHERRYAN_ARROW_TARGET_MODE", "ocr").strip().lower()
+    if target_mode == "fixed":
+        item_targets = _teacher_ryan_fixed_targets(items)
+        print("TeacherRyan fixed 2x5 arrow targets enabled.")
+    else:
+        try:
+            ocr_analysis = analyze_vocabulary_labels_ocr(image_path, items)
+        except ImageAnalysisError as exc:
+            raise SafetyError(f"TeacherRyan OCR arrow target detection failed: {exc}") from exc
+        item_targets = ocr_analysis.targets
+        print("TeacherRyan OCR arrow targets enabled.")
+        for item in items:
+            print(f"- OCR target {item}: {item_targets[item]}")
 
     item_audio_paths, cta_audio_path = synthesize_teacher_ryan_audios(
         items,

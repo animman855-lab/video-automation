@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from PIL import Image
 
@@ -16,6 +17,12 @@ class GridAnalysis:
     vertical_lines: list[int]
     horizontal_lines: list[int]
     cells_found: int
+
+
+@dataclass(frozen=True)
+class OcrLabelAnalysis:
+    targets: dict[str, tuple[int, int]]
+    boxes: dict[str, tuple[int, int, int, int]]
 
 
 WIDTH = 1080
@@ -36,6 +43,110 @@ def _cover_image(image: Image.Image) -> Image.Image:
     left = (new_w - WIDTH) // 2
     top = (new_h - HEIGHT) // 2
     return resized.crop((left, top, left + WIDTH, top + HEIGHT))
+
+
+def _normalize_ocr_text(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z -]+", "", value).strip().lower()
+    return re.sub(r"\s+", " ", cleaned)
+
+
+def _word_boxes_from_ocr(image: Image.Image) -> list[tuple[str, tuple[int, int, int, int]]]:
+    try:
+        import pytesseract
+        from pytesseract import Output
+    except ImportError as exc:
+        raise ImageAnalysisError("pytesseract is not installed.") from exc
+
+    try:
+        data = pytesseract.image_to_data(
+            image,
+            output_type=Output.DICT,
+            config="--psm 6",
+        )
+    except Exception as exc:  # pragma: no cover - depends on system OCR binary
+        raise ImageAnalysisError(f"Tesseract OCR failed: {exc}") from exc
+
+    words: list[tuple[str, tuple[int, int, int, int]]] = []
+    for index, raw_text in enumerate(data.get("text", [])):
+        text = _normalize_ocr_text(raw_text)
+        if not text:
+            continue
+        try:
+            confidence = float(data.get("conf", ["-1"])[index])
+        except ValueError:
+            confidence = -1
+        if confidence < 35:
+            continue
+
+        left = int(data["left"][index])
+        top = int(data["top"][index])
+        width = int(data["width"][index])
+        height = int(data["height"][index])
+        if width < 12 or height < 10:
+            continue
+        words.append((text, (left, top, left + width, top + height)))
+    return words
+
+
+def _merge_boxes(boxes: list[tuple[int, int, int, int]]) -> tuple[int, int, int, int]:
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    )
+
+
+def _find_phrase_box(
+    item: str,
+    words: list[tuple[str, tuple[int, int, int, int]]],
+) -> tuple[int, int, int, int] | None:
+    parts = _normalize_ocr_text(item).split()
+    if not parts:
+        return None
+
+    for start in range(0, len(words) - len(parts) + 1):
+        candidate_words = words[start : start + len(parts)]
+        candidate_text = " ".join(word for word, _ in candidate_words)
+        if candidate_text == " ".join(parts):
+            return _merge_boxes([box for _, box in candidate_words])
+
+    return None
+
+
+def analyze_vocabulary_labels_ocr(image_path: Path, items: list[str]) -> OcrLabelAnalysis:
+    if not items:
+        raise ImageAnalysisError("No vocabulary items were provided for OCR analysis.")
+
+    image = _cover_image(Image.open(image_path))
+    word_boxes = _word_boxes_from_ocr(image)
+    if not word_boxes:
+        raise ImageAnalysisError("OCR did not find any readable labels in the image.")
+
+    targets: dict[str, tuple[int, int]] = {}
+    boxes: dict[str, tuple[int, int, int, int]] = {}
+    missing: list[str] = []
+
+    for item in items:
+        box = _find_phrase_box(item, word_boxes)
+        if box is None:
+            missing.append(item)
+            continue
+
+        x1, y1, x2, y2 = box
+        boxes[item] = box
+        # Point near the label center. The arrow starts from the side and ends on
+        # the readable word, which is safer than guessing the illustration bounds.
+        targets[item] = (int((x1 + x2) / 2), int((y1 + y2) / 2))
+
+    if missing:
+        detected = ", ".join(word for word, _ in word_boxes[:80])
+        raise ImageAnalysisError(
+            "OCR could not find all Script labels. "
+            f"Missing: {', '.join(missing)}. Detected words: {detected}"
+        )
+
+    return OcrLabelAnalysis(targets=targets, boxes=boxes)
 
 
 def _gray_line_score(pixel: tuple[int, int, int]) -> bool:
