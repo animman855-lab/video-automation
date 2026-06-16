@@ -47,7 +47,6 @@ OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp
 CANVAS_SIZE = (1080, 1920)
 MAX_CARDS = 5
 CARD_MAX_SECONDS = 12.4
-APPEND_OUTRO_MAX_SOURCE_SECONDS = 15.5
 
 
 @dataclass(frozen=True)
@@ -970,15 +969,8 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
     overlay_cards(ffmpeg, normalized_source, source_with_cards, cards, work_dir / "cards")
 
     normalized_source_duration = _video_duration_seconds(ffmpeg, normalized_source)
-    if normalized_source_duration >= APPEND_OUTRO_MAX_SOURCE_SECONDS:
-        print(
-            "Source video already looks longer than a raw Flow clip. "
-            "Skipping appended outro to avoid double outro."
-        )
-        shutil.copyfile(source_with_cards, output_video)
-        if not output_video.exists() or output_video.stat().st_size < 1024:
-            raise RuntimeError("Final Kayla video was not created correctly.")
-        return output_video
+    print(f"Source video duration before outro: {normalized_source_duration:.2f}s")
+    print("Appending Kayla outro asset.")
 
     if _video_has_audio(ffmpeg, OUTRO_ASSET):
         outro_cmd = [
