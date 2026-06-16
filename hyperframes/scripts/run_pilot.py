@@ -62,6 +62,7 @@ TEACHERRYAN_FIXED_TARGETS = [
     (780, 1340),
 ]
 TEACHERRYAN_CTA = "Follow TeacherRyan for more English vocabulary."
+TEACHERRYAN_MAX_OCR_FALLBACKS = 2
 
 
 def repo_root() -> Path:
@@ -179,6 +180,42 @@ def _teacher_ryan_fixed_targets(items: list[str]) -> dict[str, tuple[int, int]]:
     return {item: TEACHERRYAN_FIXED_TARGETS[index] for index, item in enumerate(items)}
 
 
+def _teacher_ryan_ocr_hybrid_targets(image_path: Path, items: list[str]) -> dict[str, tuple[int, int]]:
+    try:
+        ocr_analysis = analyze_vocabulary_labels_ocr(image_path, items)
+    except ImageAnalysisError as exc:
+        raise SafetyError(f"TeacherRyan OCR arrow target detection failed: {exc}") from exc
+
+    if not ocr_analysis.missing:
+        print("TeacherRyan OCR arrow targets enabled. All labels detected.")
+        for item in items:
+            print(f"- OCR target {item}: {ocr_analysis.targets[item]}")
+        return ocr_analysis.targets
+
+    if len(ocr_analysis.missing) > TEACHERRYAN_MAX_OCR_FALLBACKS:
+        detected = ", ".join(ocr_analysis.detected_words[:80])
+        raise SafetyError(
+            "TeacherRyan OCR arrow target detection failed: "
+            f"missing {len(ocr_analysis.missing)} labels "
+            f"({', '.join(ocr_analysis.missing)}). Detected words: {detected}"
+        )
+
+    fixed_targets = _teacher_ryan_fixed_targets(items)
+    item_targets = dict(ocr_analysis.targets)
+    for missing_item in ocr_analysis.missing:
+        item_targets[missing_item] = fixed_targets[missing_item]
+
+    print(
+        "TeacherRyan OCR hybrid arrow targets enabled. "
+        f"OCR missing {len(ocr_analysis.missing)} label(s); fixed grid fallback used for: "
+        f"{', '.join(ocr_analysis.missing)}"
+    )
+    for item in items:
+        source = "fixed fallback" if item in ocr_analysis.missing else "OCR"
+        print(f"- {source} target {item}: {item_targets[item]}")
+    return item_targets
+
+
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     limits = PilotLimits()
     props = row.get("properties", {})
@@ -200,14 +237,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
         item_targets = _teacher_ryan_fixed_targets(items)
         print("TeacherRyan fixed 2x5 arrow targets enabled.")
     else:
-        try:
-            ocr_analysis = analyze_vocabulary_labels_ocr(image_path, items)
-        except ImageAnalysisError as exc:
-            raise SafetyError(f"TeacherRyan OCR arrow target detection failed: {exc}") from exc
-        item_targets = ocr_analysis.targets
-        print("TeacherRyan OCR arrow targets enabled.")
-        for item in items:
-            print(f"- OCR target {item}: {item_targets[item]}")
+        item_targets = _teacher_ryan_ocr_hybrid_targets(image_path, items)
 
     item_audio_paths, cta_audio_path = synthesize_teacher_ryan_audios(
         items,

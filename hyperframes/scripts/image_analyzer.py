@@ -23,6 +23,8 @@ class GridAnalysis:
 class OcrLabelAnalysis:
     targets: dict[str, tuple[int, int]]
     boxes: dict[str, tuple[int, int, int, int]]
+    missing: list[str]
+    detected_words: list[str]
 
 
 WIDTH = 1080
@@ -139,14 +141,12 @@ def analyze_vocabulary_labels_ocr(image_path: Path, items: list[str]) -> OcrLabe
         # the readable word, which is safer than guessing the illustration bounds.
         targets[item] = (int((x1 + x2) / 2), int((y1 + y2) / 2))
 
-    if missing:
-        detected = ", ".join(word for word, _ in word_boxes[:80])
-        raise ImageAnalysisError(
-            "OCR could not find all Script labels. "
-            f"Missing: {', '.join(missing)}. Detected words: {detected}"
-        )
-
-    return OcrLabelAnalysis(targets=targets, boxes=boxes)
+    return OcrLabelAnalysis(
+        targets=targets,
+        boxes=boxes,
+        missing=missing,
+        detected_words=[word for word, _ in word_boxes],
+    )
 
 
 def _gray_line_score(pixel: tuple[int, int, int]) -> bool:
