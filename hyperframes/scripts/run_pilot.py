@@ -62,7 +62,7 @@ TEACHERRYAN_FIXED_TARGETS = [
     (780, 1340),
 ]
 TEACHERRYAN_CTA = "Follow TeacherRyan for more English vocabulary."
-TEACHERRYAN_MAX_OCR_FALLBACKS = 2
+TEACHERRYAN_MAX_OCR_FALLBACKS = 4
 
 
 def repo_root() -> Path:
