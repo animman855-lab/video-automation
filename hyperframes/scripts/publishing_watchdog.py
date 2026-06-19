@@ -170,6 +170,14 @@ def bucket_counts(items: list[dict]) -> dict[str, int]:
     }
 
 
+def urgent_items(items: list[dict]) -> list[dict]:
+    return [item for item in items if item["issues"] and item["due"]]
+
+
+def preparation_items(items: list[dict]) -> list[dict]:
+    return [item for item in items if item["issues"] and not item["due"]]
+
+
 def short_issue_lines(prefix: str, items: list[dict], limit: int) -> list[str]:
     lines: list[str] = []
     for item in [entry for entry in items if entry["issues"]][:limit]:
@@ -342,18 +350,24 @@ def github_runs(workflow_file: str, limit: int) -> list[dict]:
 def render_report(rows: list[dict], image_rows: list[dict], now: datetime, target_date: str, lookback_runs: int) -> str:
     summaries = [row_summary(row, now) for row in rows]
     issue_rows = [item for item in summaries if item["issues"]]
-    ready_rows = [item for item in summaries if not item["issues"] and item["status"] == "A publier"]
-    published_rows = [item for item in summaries if item["status"] == "Publie"]
     image_summaries = [image_row_summary(row, now) for row in image_rows]
     image_issue_rows = [item for item in image_summaries if item["issues"]]
-    image_ready_rows = [item for item in image_summaries if not item["issues"] and item["status"] == "A publier"]
-    image_published_rows = [item for item in image_summaries if item["status"] == "Publie"]
     normal_video_rows = [item for item in summaries if is_normal_hyperframes_video(item)]
     kayla_rows = [item for item in summaries if is_kayla_ad(item)]
     other_video_rows = [item for item in summaries if item not in normal_video_rows and item not in kayla_rows]
     normal_counts = bucket_counts(normal_video_rows)
     kayla_counts = bucket_counts(kayla_rows)
     image_counts = bucket_counts(image_summaries)
+    urgent_video_rows = urgent_items(normal_video_rows)
+    urgent_image_rows = urgent_items(image_summaries)
+    urgent_kayla_rows = urgent_items(kayla_rows)
+    urgent_other_rows = urgent_items(other_video_rows)
+    prep_video_rows = preparation_items(normal_video_rows)
+    prep_image_rows = preparation_items(image_summaries)
+    prep_kayla_rows = preparation_items(kayla_rows)
+    prep_other_rows = preparation_items(other_video_rows)
+    urgent_total = len(urgent_video_rows) + len(urgent_image_rows) + len(urgent_kayla_rows) + len(urgent_other_rows)
+    prep_total = len(prep_video_rows) + len(prep_image_rows) + len(prep_kayla_rows) + len(prep_other_rows)
 
     lines: list[str] = []
     lines.append("# Saloo Publishing Watchdog")
@@ -361,6 +375,8 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
     lines.append(f"- Date checked: {target_date}")
     lines.append(f"- Current Montreal time: {now.strftime('%Y-%m-%d %H:%M')}")
     lines.append(f"- Global issues: {len(issue_rows) + len(image_issue_rows)}")
+    lines.append(f"- Urgent issues: {urgent_total}")
+    lines.append(f"- Preparation issues: {prep_total}")
     lines.append(f"- Video rows found: {len(rows)}")
     lines.append(f"- Image Quiz rows found: {len(image_rows)}")
     lines.append("")
@@ -393,6 +409,39 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
     lines.append(f"- Blocked / needs attention: {kayla_counts['blocked']}")
     lines.append(f"- Next due slot: {next_due_slot(KAYLA_AD_SLOTS, now, target_date)}")
     lines.append("")
+
+    lines.append("## Alert Levels")
+    if urgent_total:
+        lines.append("### Urgent - action needed now")
+        for line in short_issue_lines("Video", urgent_video_rows, 20):
+            lines.append(line)
+        for line in short_issue_lines("Quiz", urgent_image_rows, 20):
+            lines.append(line)
+        for line in short_issue_lines("Kayla", urgent_kayla_rows, 20):
+            lines.append(line)
+        for line in short_issue_lines("Other", urgent_other_rows, 20):
+            lines.append(line)
+        lines.append("")
+    else:
+        lines.append("### Urgent - action needed now")
+        lines.append("- No urgent issue detected.")
+        lines.append("")
+
+    if prep_total:
+        lines.append("### Preparation - fix before the slot")
+        for line in short_issue_lines("Video", prep_video_rows, 20):
+            lines.append(line)
+        for line in short_issue_lines("Quiz", prep_image_rows, 20):
+            lines.append(line)
+        for line in short_issue_lines("Kayla", prep_kayla_rows, 20):
+            lines.append(line)
+        for line in short_issue_lines("Other", prep_other_rows, 20):
+            lines.append(line)
+        lines.append("")
+    else:
+        lines.append("### Preparation - fix before the slot")
+        lines.append("- No preparation issue detected.")
+        lines.append("")
 
     if issue_rows or image_issue_rows:
         lines.append("## Issues")
@@ -511,25 +560,34 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
 def render_telegram_message(rows: list[dict], image_rows: list[dict], now: datetime, target_date: str) -> str:
     summaries = [row_summary(row, now) for row in rows]
     issue_rows = [item for item in summaries if item["issues"]]
-    ready_rows = [item for item in summaries if not item["issues"] and item["status"] == "A publier"]
-    published_rows = [item for item in summaries if item["status"] == "Publie"]
     image_summaries = [image_row_summary(row, now) for row in image_rows]
     image_issue_rows = [item for item in image_summaries if item["issues"]]
-    image_ready_rows = [item for item in image_summaries if not item["issues"] and item["status"] == "A publier"]
-    image_published_rows = [item for item in image_summaries if item["status"] == "Publie"]
     normal_video_rows = [item for item in summaries if is_normal_hyperframes_video(item)]
     kayla_rows = [item for item in summaries if is_kayla_ad(item)]
+    other_video_rows = [item for item in summaries if item not in normal_video_rows and item not in kayla_rows]
     normal_counts = bucket_counts(normal_video_rows)
     kayla_counts = bucket_counts(kayla_rows)
     image_counts = bucket_counts(image_summaries)
+    urgent_video_rows = urgent_items(normal_video_rows)
+    urgent_image_rows = urgent_items(image_summaries)
+    urgent_kayla_rows = urgent_items(kayla_rows)
+    urgent_other_rows = urgent_items(other_video_rows)
+    prep_video_rows = preparation_items(normal_video_rows)
+    prep_image_rows = preparation_items(image_summaries)
+    prep_kayla_rows = preparation_items(kayla_rows)
+    prep_other_rows = preparation_items(other_video_rows)
+    urgent_total = len(urgent_video_rows) + len(urgent_image_rows) + len(urgent_kayla_rows) + len(urgent_other_rows)
+    prep_total = len(prep_video_rows) + len(prep_image_rows) + len(prep_kayla_rows) + len(prep_other_rows)
     run_url = os.getenv("GITHUB_SERVER_URL", "https://github.com")
     repository = os.getenv("GITHUB_REPOSITORY", "animman855-lab/video-automation")
     run_id = os.getenv("GITHUB_RUN_ID", "")
     github_run_url = f"{run_url}/{repository}/actions/runs/{run_id}" if run_id else ""
 
     total_issues = len(issue_rows) + len(image_issue_rows)
-    if total_issues:
-        status_line = f"Saloo Watchdog - WARNING ({total_issues} probleme(s))"
+    if urgent_total:
+        status_line = f"Saloo Watchdog - URGENT ({urgent_total})"
+    elif prep_total:
+        status_line = f"Saloo Watchdog - PREPARATION ({prep_total})"
     else:
         status_line = "Saloo Watchdog - OK"
 
@@ -556,18 +614,33 @@ def render_telegram_message(rows: list[dict], image_rows: list[dict], now: datet
         f"Next due: {next_due_slot(KAYLA_AD_SLOTS, now, target_date)}",
     ]
 
-    if issue_rows or image_issue_rows:
+    if urgent_total:
         lines.append("")
         lines.append("URGENT")
         urgent_lines: list[str] = []
-        urgent_lines.extend(short_issue_lines("Video", normal_video_rows, 4))
-        urgent_lines.extend(short_issue_lines("Quiz", image_summaries, 3))
-        urgent_lines.extend(short_issue_lines("Kayla", kayla_rows, 3))
+        urgent_lines.extend(short_issue_lines("Video", urgent_video_rows, 4))
+        urgent_lines.extend(short_issue_lines("Quiz", urgent_image_rows, 3))
+        urgent_lines.extend(short_issue_lines("Kayla", urgent_kayla_rows, 3))
+        urgent_lines.extend(short_issue_lines("Other", urgent_other_rows, 2))
         for line in urgent_lines[:10]:
             lines.append(line)
         shown = len(urgent_lines[:10])
-        if total_issues > shown:
-            lines.append(f"- +{total_issues - shown} autre(s) probleme(s) dans le rapport GitHub")
+        if urgent_total > shown:
+            lines.append(f"- +{urgent_total - shown} autre(s) urgence(s) dans le rapport GitHub")
+
+    if prep_total:
+        lines.append("")
+        lines.append("PREPARATION")
+        prep_lines: list[str] = []
+        prep_lines.extend(short_issue_lines("Video", prep_video_rows, 4))
+        prep_lines.extend(short_issue_lines("Quiz", prep_image_rows, 3))
+        prep_lines.extend(short_issue_lines("Kayla", prep_kayla_rows, 3))
+        prep_lines.extend(short_issue_lines("Other", prep_other_rows, 2))
+        for line in prep_lines[:10]:
+            lines.append(line)
+        shown = len(prep_lines[:10])
+        if prep_total > shown:
+            lines.append(f"- +{prep_total - shown} autre(s) preparation(s) dans le rapport GitHub")
 
     if github_run_url:
         lines.append("")
