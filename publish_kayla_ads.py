@@ -221,6 +221,24 @@ def ensure_required_hashtags(description: str, max_chars: int | None = None) -> 
     return f"{trimmed}{separator}{hashtag_line}".strip()
 
 
+def title_with_required_hashtags(title: str, max_chars: int = 150) -> str:
+    clean_title = " ".join((title or "").split()).strip()
+    missing = missing_required_hashtags(clean_title)
+    if missing:
+        clean_title = f"{clean_title} {' '.join(missing)}".strip()
+    if len(clean_title) <= max_chars:
+        return clean_title
+    return clean_title[: max_chars - 3].rstrip() + "..."
+
+
+def upload_title_for_platform(title: str, platform_key: str) -> str:
+    if platform_key == "youtube":
+        return title_with_required_hashtags(title, max_chars=90)
+    if platform_key == "tiktok":
+        return title_with_required_hashtags(title, max_chars=150)
+    return title
+
+
 def kayla_ad_context(script: str, prompt: str, notion_title: str) -> str:
     if script.strip():
         return script.strip()
@@ -292,12 +310,35 @@ def upload_video(video_path, title, description, platform):
             ("link", EBOOK_LINK),
         ]
     else:
+        description = ensure_required_hashtags(description)
+        upload_title = upload_title_for_platform(title, key)
         data_params = [
             ("user", KAYLA_PROFILE),
-            ("title", title),
+            ("title", upload_title),
             ("description", description),
             ("platform[]", key),
         ]
+        if key == "facebook":
+            data_params.extend(
+                [
+                    ("facebook_title", title),
+                    ("facebook_description", description),
+                ]
+            )
+        elif key == "instagram":
+            data_params.extend(
+                [
+                    ("instagram_title", title),
+                    ("instagram_description", description),
+                ]
+            )
+        elif key == "tiktok":
+            data_params.extend(
+                [
+                    ("tiktok_title", upload_title),
+                    ("tiktok_description", description),
+                ]
+            )
 
     with open(video_path, "rb") as video_file:
         response = requests.post(
@@ -405,6 +446,9 @@ def main():
             missing_hashtags = missing_required_hashtags(description)
             print(f"\n  [{platform}]")
             print(f"  Title: {title[:90]}")
+            upload_title_preview = upload_title_for_platform(title, platform_key(platform) or "")
+            if upload_title_preview != title:
+                print(f"  Upload title: {upload_title_preview[:120]}")
             print(f"  Description: {description[:120]}...")
             if missing_hashtags:
                 print(f"  Required hashtags present: no - missing {missing_hashtags}")
