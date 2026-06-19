@@ -19,6 +19,13 @@ KAYLA_PROFILE = "kayla"
 KAYLA_PINTEREST_BOARD_ID = "1108800439448657323"
 MIN_SUCCESSFUL_PLATFORMS = 2
 SLOT_WINDOW_MINUTES = 90
+REQUIRED_HASHTAGS = [
+    "#learnenglish",
+    "#englishapp",
+    "#englishpractice",
+    "#speakenglish",
+    "#salooenglish",
+]
 
 SLOT_HOURS = {
     "00:00": 0,
@@ -123,7 +130,8 @@ Rules:
 - Keep the copy direct, natural, and conversion-focused.
 - Do not make fake claims about guaranteed results.
 - Do not mention discounts unless the script says so.
-- Mandatory hashtags where appropriate: #learnenglish #englishapp #englishpractice #speakenglish #salooenglish
+- Always include these exact mandatory hashtags in every platform description:
+  #learnenglish #englishapp #englishpractice #speakenglish #salooenglish
 
 Generate only for these platforms: {platforms_str}
 
@@ -131,7 +139,7 @@ Format exactly:
 YOUTUBE_TITLE: [title]
 YOUTUBE_DESCRIPTION: [description]
 TIKTOK_TITLE: [title]
-TIKTOK_DESCRIPTION:
+TIKTOK_DESCRIPTION: [description]
 INSTAGRAM_TITLE: [title]
 INSTAGRAM_DESCRIPTION: [description]
 FACEBOOK_TITLE: [title]
@@ -182,6 +190,50 @@ Video script/context:
     return result
 
 
+def missing_required_hashtags(text: str) -> list[str]:
+    lowered = (text or "").lower()
+    return [tag for tag in REQUIRED_HASHTAGS if tag.lower() not in lowered]
+
+
+def ensure_required_hashtags(description: str, max_chars: int | None = None) -> str:
+    clean_description = (description or "").strip()
+    missing = missing_required_hashtags(clean_description)
+    if not missing:
+        if max_chars and len(clean_description) > max_chars:
+            return clean_description[: max_chars - 3].rstrip() + "..."
+        return clean_description
+
+    hashtag_line = " ".join(missing)
+    separator = "\n\n" if clean_description else ""
+    candidate = f"{clean_description}{separator}{hashtag_line}".strip()
+
+    if not max_chars or len(candidate) <= max_chars:
+        return candidate
+
+    available = max_chars - len(hashtag_line) - len(separator)
+    if available <= 0:
+        return hashtag_line[:max_chars]
+
+    trimmed = clean_description[: max(0, available - 3)].rstrip()
+    if trimmed:
+        trimmed = trimmed.rsplit(" ", 1)[0].rstrip() or trimmed
+        trimmed += "..."
+    return f"{trimmed}{separator}{hashtag_line}".strip()
+
+
+def kayla_ad_context(script: str, prompt: str, notion_title: str) -> str:
+    if script.strip():
+        return script.strip()
+    if prompt.strip():
+        return prompt.strip()
+    return (
+        f"Kayla UGC ad for Saloo English. Notion title: {notion_title}. "
+        "Promote Saloo English as an app that helps English learners practice speaking, "
+        "fix common mistakes, improve pronunciation, and build confidence for real-life conversations. "
+        "Keep the copy natural, direct, and conversion-focused."
+    )
+
+
 def get_drive_file_id(drive_url):
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", drive_url)
     if match:
@@ -227,9 +279,7 @@ def upload_video(video_path, title, description, platform):
         return False
 
     if key == "pinterest":
-        pinterest_desc = description or ""
-        if len(pinterest_desc) > 440:
-            pinterest_desc = pinterest_desc[:437] + "..."
+        pinterest_desc = ensure_required_hashtags(description, max_chars=440)
         link_text = f"\n\nTry Saloo English: {EBOOK_LINK}"
         if len(pinterest_desc) + len(link_text) <= 480:
             pinterest_desc += link_text
@@ -319,17 +369,21 @@ def main():
     page_id = selected["id"]
     notion_title = get_text(props.get("Titre")) or "Kayla Ad"
     script = get_text(props.get("Script"))
+    prompt = get_text(props.get("Prompt 1"))
     video_url = get_text(props.get("Lien Video"))
     platforms = get_multi_select(props.get("Plateforme", {}))
     slot = get_text(props.get("Slot"))
+    context = kayla_ad_context(script, prompt, notion_title)
 
     print(f"Selected Kayla ad: {notion_title}")
     print(f"Slot: {slot}")
     print(f"Platforms: {platforms}")
-
-    if not script:
-        print("No script/context - skipping.")
-        return 0
+    if script:
+        print("Metadata context source: Script")
+    elif prompt:
+        print("Metadata context source: Prompt 1")
+    else:
+        print("Metadata context source: generic Kayla/Saloo fallback")
     if not video_url:
         print("No video link - skipping.")
         return 0
@@ -337,7 +391,7 @@ def main():
         print("No platforms - skipping.")
         return 0
 
-    metadata = generate_kayla_ad_metadata(script, platforms)
+    metadata = generate_kayla_ad_metadata(context, platforms)
     video_path = download_video(video_url)
     successes = 0
     failures = 0
@@ -346,10 +400,16 @@ def main():
         for platform in platforms:
             key = platform.upper()
             title = metadata.get(f"{key}_TITLE") or metadata.get("YOUTUBE_TITLE") or notion_title
-            description = metadata.get(f"{key}_DESCRIPTION") or metadata.get("YOUTUBE_DESCRIPTION") or script
+            description = metadata.get(f"{key}_DESCRIPTION") or metadata.get("YOUTUBE_DESCRIPTION") or context
+            description = ensure_required_hashtags(description)
+            missing_hashtags = missing_required_hashtags(description)
             print(f"\n  [{platform}]")
             print(f"  Title: {title[:90]}")
             print(f"  Description: {description[:120]}...")
+            if missing_hashtags:
+                print(f"  Required hashtags present: no - missing {missing_hashtags}")
+            else:
+                print("  Required hashtags present: yes")
             if upload_video(video_path, title, description, platform):
                 successes += 1
                 print(f"  {platform} success")
