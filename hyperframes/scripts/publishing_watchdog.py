@@ -24,6 +24,9 @@ SLOT_HOURS = {
     "20:00": 20 * 60,
     "22:00": 22 * 60,
 }
+NORMAL_VIDEO_AVATARS = {"oliviaa", "oliviaaa", "cindy", "teacherryan", "thefluentbuild"}
+NORMAL_VIDEO_SLOTS = ["08:00", "16:00"]
+KAYLA_AD_SLOTS = ["08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00", "00:00", "02:00"]
 
 
 def repo_root() -> Path:
@@ -128,6 +131,51 @@ def slot_has_started(publication_date: str, slot: str, now: datetime) -> bool:
 
     current_minutes = now.hour * 60 + now.minute
     return current_minutes >= slot_minutes
+
+
+def next_due_slot(slots: list[str], now: datetime, target_date: str) -> str:
+    today = now.strftime("%Y-%m-%d")
+    if target_date < today:
+        return "past date"
+    if target_date > today:
+        return slots[0] if slots else "none"
+
+    current_minutes = now.hour * 60 + now.minute
+    for slot in slots:
+        slot_minutes = SLOT_HOURS.get(slot)
+        if slot_minutes is not None and current_minutes < slot_minutes:
+            return slot
+    return "done today"
+
+
+def is_normal_hyperframes_video(item: dict) -> bool:
+    return (
+        item["avatar"] in NORMAL_VIDEO_AVATARS
+        and item["video_type"] == "HyperFrames"
+        and item["slot"] in NORMAL_VIDEO_SLOTS
+    )
+
+
+def is_kayla_ad(item: dict) -> bool:
+    return item["avatar"] == "kayla"
+
+
+def bucket_counts(items: list[dict]) -> dict[str, int]:
+    return {
+        "total": len(items),
+        "published": sum(1 for item in items if item["status"] == "Publie"),
+        "ready": sum(1 for item in items if not item["issues"] and item["status"] == "A publier"),
+        "blocked": sum(1 for item in items if item["issues"]),
+        "waiting": sum(1 for item in items if not item["issues"] and item["status"] not in {"A publier", "Publie"}),
+    }
+
+
+def short_issue_lines(prefix: str, items: list[dict], limit: int) -> list[str]:
+    lines: list[str] = []
+    for item in [entry for entry in items if entry["issues"]][:limit]:
+        first_issue = item["issues"][0] if item["issues"] else "Probleme inconnu."
+        lines.append(f"- {prefix} {item['slot']} {item['avatar']} ({item['status']}): {first_issue}")
+    return lines
 
 
 def row_summary(row: dict, now: datetime) -> dict:
@@ -300,20 +348,50 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
     image_issue_rows = [item for item in image_summaries if item["issues"]]
     image_ready_rows = [item for item in image_summaries if not item["issues"] and item["status"] == "A publier"]
     image_published_rows = [item for item in image_summaries if item["status"] == "Publie"]
+    normal_video_rows = [item for item in summaries if is_normal_hyperframes_video(item)]
+    kayla_rows = [item for item in summaries if is_kayla_ad(item)]
+    other_video_rows = [item for item in summaries if item not in normal_video_rows and item not in kayla_rows]
+    normal_counts = bucket_counts(normal_video_rows)
+    kayla_counts = bucket_counts(kayla_rows)
+    image_counts = bucket_counts(image_summaries)
 
     lines: list[str] = []
     lines.append("# Saloo Publishing Watchdog")
     lines.append("")
     lines.append(f"- Date checked: {target_date}")
     lines.append(f"- Current Montreal time: {now.strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"- Global issues: {len(issue_rows) + len(image_issue_rows)}")
     lines.append(f"- Video rows found: {len(rows)}")
-    lines.append(f"- Video rows with issues: {len(issue_rows)}")
-    lines.append(f"- Video rows ready/no detected issue: {len(ready_rows)}")
-    lines.append(f"- Video rows published: {len(published_rows)}")
     lines.append(f"- Image Quiz rows found: {len(image_rows)}")
-    lines.append(f"- Image Quiz rows with issues: {len(image_issue_rows)}")
-    lines.append(f"- Image Quiz rows ready/no detected issue: {len(image_ready_rows)}")
-    lines.append(f"- Image Quiz rows published: {len(image_published_rows)}")
+    lines.append("")
+
+    lines.append("## Operational Summary")
+    lines.append("")
+    lines.append("### HyperFrames Videos")
+    lines.append(f"- Expected schedule: 4 avatars x 2 slots ({', '.join(NORMAL_VIDEO_SLOTS)}) = 8 videos/day")
+    lines.append(f"- Rows found today: {normal_counts['total']}")
+    lines.append(f"- Published: {normal_counts['published']}")
+    lines.append(f"- Ready: {normal_counts['ready']}")
+    lines.append(f"- Waiting / in preparation: {normal_counts['waiting']}")
+    lines.append(f"- Blocked / needs attention: {normal_counts['blocked']}")
+    lines.append(f"- Next due slot: {next_due_slot(NORMAL_VIDEO_SLOTS, now, target_date)}")
+    lines.append("")
+    lines.append("### Image Quiz")
+    lines.append("- Expected schedule: usually once per day, normally around the Image Quiz slot.")
+    lines.append(f"- Rows found today: {image_counts['total']}")
+    lines.append(f"- Published: {image_counts['published']}")
+    lines.append(f"- Ready: {image_counts['ready']}")
+    lines.append(f"- Waiting / in preparation: {image_counts['waiting']}")
+    lines.append(f"- Blocked / needs attention: {image_counts['blocked']}")
+    lines.append("")
+    lines.append("### Kayla Ads")
+    lines.append(f"- Expected schedule: up to 10 slots/day ({', '.join(KAYLA_AD_SLOTS)})")
+    lines.append(f"- Rows found today: {kayla_counts['total']}")
+    lines.append(f"- Published: {kayla_counts['published']}")
+    lines.append(f"- Ready: {kayla_counts['ready']}")
+    lines.append(f"- Waiting / in preparation: {kayla_counts['waiting']}")
+    lines.append(f"- Blocked / needs attention: {kayla_counts['blocked']}")
+    lines.append(f"- Next due slot: {next_due_slot(KAYLA_AD_SLOTS, now, target_date)}")
     lines.append("")
 
     if issue_rows or image_issue_rows:
@@ -341,8 +419,8 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
         lines.append("- No issues detected.")
         lines.append("")
 
-    lines.append("## Video Rows")
-    for item in summaries:
+    lines.append("## HyperFrames Video Rows")
+    for item in normal_video_rows:
         platforms = ", ".join(item["platforms"]) if item["platforms"] else "(none)"
         flags = []
         if item["due"]:
@@ -356,6 +434,29 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
             f"- [{item['slot']}] {item['avatar']} | {item['video_type']} | {item['status']} | "
             f"platforms: {platforms} | {flag_text}"
         )
+    lines.append("")
+
+    lines.append("## Kayla Ads Rows")
+    for item in kayla_rows:
+        platforms = ", ".join(item["platforms"]) if item["platforms"] else "(none)"
+        flags = []
+        if item["due"]:
+            flags.append("due")
+        if item["has_video"]:
+            flags.append("video")
+        if item["has_image_hyperframes"]:
+            flags.append("source")
+        flag_text = ", ".join(flags) if flags else "not due/no media"
+        lines.append(
+            f"- [{item['slot']}] {item['avatar']} | {item['video_type']} | {item['status']} | "
+            f"platforms: {platforms} | {flag_text}"
+        )
+    if other_video_rows:
+        lines.append("")
+        lines.append("## Other Video Rows")
+        for item in other_video_rows:
+            platforms = ", ".join(item["platforms"]) if item["platforms"] else "(none)"
+            lines.append(f"- [{item['slot']}] {item['avatar']} | {item['video_type']} | {item['status']} | platforms: {platforms}")
     lines.append("")
 
     lines.append("## Image Quiz Rows")
@@ -416,6 +517,11 @@ def render_telegram_message(rows: list[dict], image_rows: list[dict], now: datet
     image_issue_rows = [item for item in image_summaries if item["issues"]]
     image_ready_rows = [item for item in image_summaries if not item["issues"] and item["status"] == "A publier"]
     image_published_rows = [item for item in image_summaries if item["status"] == "Publie"]
+    normal_video_rows = [item for item in summaries if is_normal_hyperframes_video(item)]
+    kayla_rows = [item for item in summaries if is_kayla_ad(item)]
+    normal_counts = bucket_counts(normal_video_rows)
+    kayla_counts = bucket_counts(kayla_rows)
+    image_counts = bucket_counts(image_summaries)
     run_url = os.getenv("GITHUB_SERVER_URL", "https://github.com")
     repository = os.getenv("GITHUB_REPOSITORY", "animman855-lab/video-automation")
     run_id = os.getenv("GITHUB_RUN_ID", "")
@@ -423,29 +529,43 @@ def render_telegram_message(rows: list[dict], image_rows: list[dict], now: datet
 
     total_issues = len(issue_rows) + len(image_issue_rows)
     if total_issues:
-        status_line = f"Saloo Watchdog: {total_issues} probleme(s) detecte(s)"
+        status_line = f"Saloo Watchdog - WARNING ({total_issues} probleme(s))"
     else:
-        status_line = "Saloo Watchdog: OK, aucun probleme detecte"
+        status_line = "Saloo Watchdog - OK"
 
     lines = [
         status_line,
         f"Date: {target_date}",
         f"Heure Montreal: {now.strftime('%H:%M')}",
-        f"Videos: {len(published_rows)}/{len(rows)} publiees | {len(ready_rows)} pretes",
-        f"Image Quiz: {len(image_published_rows)}/{len(image_rows)} publies | {len(image_ready_rows)} prets",
+        "",
+        "VIDEOS HYPERFRAMES",
+        f"Expected: 8/day ({', '.join(NORMAL_VIDEO_SLOTS)})",
+        f"Published: {normal_counts['published']}/{normal_counts['total']}",
+        f"Ready: {normal_counts['ready']} | Waiting: {normal_counts['waiting']} | Blocked: {normal_counts['blocked']}",
+        f"Next due: {next_due_slot(NORMAL_VIDEO_SLOTS, now, target_date)}",
+        "",
+        "IMAGE QUIZ",
+        "Expected: daily quiz rows found in Notion",
+        f"Published: {image_counts['published']}/{image_counts['total']}",
+        f"Ready: {image_counts['ready']} | Waiting: {image_counts['waiting']} | Blocked: {image_counts['blocked']}",
+        "",
+        "KAYLA ADS",
+        "Expected: up to 10/day",
+        f"Published: {kayla_counts['published']}/{kayla_counts['total']}",
+        f"Ready: {kayla_counts['ready']} | Waiting: {kayla_counts['waiting']} | Blocked: {kayla_counts['blocked']}",
+        f"Next due: {next_due_slot(KAYLA_AD_SLOTS, now, target_date)}",
     ]
 
     if issue_rows or image_issue_rows:
         lines.append("")
-        lines.append("A verifier:")
-        for item in issue_rows[:8]:
-            first_issue = item["issues"][0] if item["issues"] else "Probleme inconnu."
-            lines.append(f"- Video {item['slot']} {item['avatar']} ({item['status']}): {first_issue}")
-        remaining = max(0, 8 - len(issue_rows[:8]))
-        for item in image_issue_rows[:remaining]:
-            first_issue = item["issues"][0] if item["issues"] else "Probleme inconnu."
-            lines.append(f"- Quiz {item['slot']} {item['avatar']} ({item['status']}): {first_issue}")
-        shown = len(issue_rows[:8]) + len(image_issue_rows[:remaining])
+        lines.append("URGENT")
+        urgent_lines: list[str] = []
+        urgent_lines.extend(short_issue_lines("Video", normal_video_rows, 4))
+        urgent_lines.extend(short_issue_lines("Quiz", image_summaries, 3))
+        urgent_lines.extend(short_issue_lines("Kayla", kayla_rows, 3))
+        for line in urgent_lines[:10]:
+            lines.append(line)
+        shown = len(urgent_lines[:10])
         if total_issues > shown:
             lines.append(f"- +{total_issues - shown} autre(s) probleme(s) dans le rapport GitHub")
 
