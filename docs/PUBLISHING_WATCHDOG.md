@@ -8,6 +8,11 @@ This is the first loop-engineering layer for Saloo English.
 
 It does not publish, edit Notion, upload to Drive, trigger Upload-Post, or modify any content. It only checks the current state and reports what looks blocked.
 
+It checks both:
+
+- `Video Publishing`
+- Image Quiz database from `NOTION_IMAGE_DATABASE_ID`
+
 ## Files
 
 - `.github/workflows/publishing_watchdog.yml`
@@ -23,6 +28,10 @@ For the selected `Date Publication`, it reads Notion rows and reports:
 - rows `A publier` but missing `Lien Video`
 - rows `A publier` but missing `Plateforme`
 - rows `Publie` with suspicious missing video link
+- Image Quiz rows missing `Image File`
+- Image Quiz rows missing `Caption`
+- Image Quiz rows missing `Plateforme`
+- Image Quiz rows still `A publier` after their slot started
 - recent GitHub runs for:
   - `publish.yml`
   - `publish_kayla_ads.yml`
@@ -106,6 +115,7 @@ python hyperframes/scripts/publishing_watchdog.py --date 2026-06-19
 
 - `NOTION_TOKEN`
 - `NOTION_DATABASE_ID`
+- `NOTION_IMAGE_DATABASE_ID`
 - optional: `TELEGRAM_BOT_TOKEN`
 - optional: `TELEGRAM_CHAT_ID`
 

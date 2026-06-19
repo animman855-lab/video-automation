@@ -88,6 +88,33 @@ def query_rows_for_date(publication_date: str) -> list[dict]:
         payload["start_cursor"] = data.get("next_cursor")
 
 
+def query_image_rows_for_date(publication_date: str) -> list[dict]:
+    database_id = os.getenv("NOTION_IMAGE_DATABASE_ID", "").strip()
+    if not database_id:
+        return []
+
+    url = f"https://api.notion.com/v1/databases/{database_id}/query"
+    payload = {
+        "filter": {"property": "Date Publication", "date": {"equals": publication_date}},
+        "sorts": [
+            {"property": "Slot", "direction": "ascending"},
+            {"property": "Avatar", "direction": "ascending"},
+        ],
+        "page_size": 100,
+    }
+
+    rows: list[dict] = []
+    while True:
+        response = requests.post(url, headers=notion_headers(), json=payload, timeout=30)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Notion image query failed: {response.status_code} {response.text}")
+        data = response.json()
+        rows.extend(data.get("results", []))
+        if not data.get("has_more"):
+            return rows
+        payload["start_cursor"] = data.get("next_cursor")
+
+
 def slot_has_started(publication_date: str, slot: str, now: datetime) -> bool:
     slot_minutes = SLOT_HOURS.get(slot)
     if slot_minutes is None:
@@ -179,6 +206,68 @@ def row_summary(row: dict, now: datetime) -> dict:
     }
 
 
+def image_row_summary(row: dict, now: datetime) -> dict:
+    props = row.get("properties", {})
+    title = prop_text(props, "Titre") or prop_text(props, "Name") or "(image quiz)"
+    avatar = prop_text(props, "Avatar").lower()
+    status = prop_text(props, "Statut")
+    publication_date = prop_text(props, "Date Publication")
+    slot = prop_text(props, "Slot")
+    caption = prop_text(props, "Caption")
+    image_file = prop_text(props, "Image File")
+    prompt_image = prop_text(props, "Prompt Image") or prop_text(props, "Prompt 1")
+    platforms = prop_multi_select(props, "Plateforme")
+    due = slot_has_started(publication_date, slot, now)
+
+    issues: list[str] = []
+    notes: list[str] = []
+
+    if status == "Publie":
+        notes.append("Image quiz publie.")
+    elif status == "A publier":
+        if due and not image_file:
+            issues.append("Image Quiz A publier mais Image File vide apres le debut du slot.")
+        elif not image_file:
+            notes.append("Image Quiz pret dans Notion mais attend encore Image File.")
+        if not caption:
+            issues.append("Image Quiz sans Caption: publication faible ou impossible.")
+        if not platforms:
+            issues.append("Image Quiz sans Plateforme: aucun reseau ne sera cible.")
+        if due and image_file and caption and platforms:
+            issues.append("Image Quiz A publier apres le debut du slot: verifier si publish_images.py a tourne.")
+        if not due:
+            notes.append("Slot pas encore arrive.")
+    elif status == "En cours":
+        if due:
+            if not prompt_image and not image_file:
+                issues.append("Image Quiz En cours apres le slot, sans Prompt Image ni Image File.")
+            elif not image_file:
+                issues.append("Image Quiz En cours apres le slot, Image File vide.")
+            else:
+                issues.append("Image Quiz En cours apres le slot avec Image File: verifier statut.")
+        else:
+            notes.append("Image Quiz en preparation.")
+    else:
+        if due:
+            issues.append(f"Statut image inhabituel apres le debut du slot: {status or '(vide)'}.")
+
+    return {
+        "id": row.get("id", ""),
+        "title": title,
+        "avatar": avatar,
+        "status": status,
+        "date": publication_date,
+        "slot": slot,
+        "platforms": platforms,
+        "due": due,
+        "has_image": bool(image_file),
+        "has_caption": bool(caption),
+        "has_prompt": bool(prompt_image),
+        "issues": issues,
+        "notes": notes,
+    }
+
+
 def github_headers() -> dict[str, str] | None:
     token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
     if not token:
@@ -202,25 +291,35 @@ def github_runs(workflow_file: str, limit: int) -> list[dict]:
     return response.json().get("workflow_runs", [])
 
 
-def render_report(rows: list[dict], now: datetime, target_date: str, lookback_runs: int) -> str:
+def render_report(rows: list[dict], image_rows: list[dict], now: datetime, target_date: str, lookback_runs: int) -> str:
     summaries = [row_summary(row, now) for row in rows]
     issue_rows = [item for item in summaries if item["issues"]]
     ready_rows = [item for item in summaries if not item["issues"] and item["status"] == "A publier"]
     published_rows = [item for item in summaries if item["status"] == "Publie"]
+    image_summaries = [image_row_summary(row, now) for row in image_rows]
+    image_issue_rows = [item for item in image_summaries if item["issues"]]
+    image_ready_rows = [item for item in image_summaries if not item["issues"] and item["status"] == "A publier"]
+    image_published_rows = [item for item in image_summaries if item["status"] == "Publie"]
 
     lines: list[str] = []
     lines.append("# Saloo Publishing Watchdog")
     lines.append("")
     lines.append(f"- Date checked: {target_date}")
     lines.append(f"- Current Montreal time: {now.strftime('%Y-%m-%d %H:%M')}")
-    lines.append(f"- Rows found: {len(rows)}")
-    lines.append(f"- Rows with issues: {len(issue_rows)}")
-    lines.append(f"- Rows ready/no detected issue: {len(ready_rows)}")
-    lines.append(f"- Rows published: {len(published_rows)}")
+    lines.append(f"- Video rows found: {len(rows)}")
+    lines.append(f"- Video rows with issues: {len(issue_rows)}")
+    lines.append(f"- Video rows ready/no detected issue: {len(ready_rows)}")
+    lines.append(f"- Video rows published: {len(published_rows)}")
+    lines.append(f"- Image Quiz rows found: {len(image_rows)}")
+    lines.append(f"- Image Quiz rows with issues: {len(image_issue_rows)}")
+    lines.append(f"- Image Quiz rows ready/no detected issue: {len(image_ready_rows)}")
+    lines.append(f"- Image Quiz rows published: {len(image_published_rows)}")
     lines.append("")
 
-    if issue_rows:
+    if issue_rows or image_issue_rows:
         lines.append("## Issues")
+    if issue_rows:
+        lines.append("### Video / HyperFrames / Kayla")
         for item in issue_rows:
             lines.append(f"- [{item['slot']}] {item['avatar']} | {item['video_type']} | {item['status']} | {item['title']}")
             for issue in item["issues"]:
@@ -228,12 +327,21 @@ def render_report(rows: list[dict], now: datetime, target_date: str, lookback_ru
             for note in item["notes"]:
                 lines.append(f"  - note: {note}")
         lines.append("")
-    else:
+    if image_issue_rows:
+        lines.append("### Image Quiz")
+        for item in image_issue_rows:
+            lines.append(f"- [{item['slot']}] {item['avatar']} | {item['status']} | {item['title']}")
+            for issue in item["issues"]:
+                lines.append(f"  - ISSUE: {issue}")
+            for note in item["notes"]:
+                lines.append(f"  - note: {note}")
+        lines.append("")
+    if not issue_rows and not image_issue_rows:
         lines.append("## Issues")
         lines.append("- No issues detected.")
         lines.append("")
 
-    lines.append("## Rows")
+    lines.append("## Video Rows")
     for item in summaries:
         platforms = ", ".join(item["platforms"]) if item["platforms"] else "(none)"
         flags = []
@@ -248,6 +356,26 @@ def render_report(rows: list[dict], now: datetime, target_date: str, lookback_ru
             f"- [{item['slot']}] {item['avatar']} | {item['video_type']} | {item['status']} | "
             f"platforms: {platforms} | {flag_text}"
         )
+    lines.append("")
+
+    lines.append("## Image Quiz Rows")
+    if not image_summaries and not os.getenv("NOTION_IMAGE_DATABASE_ID", "").strip():
+        lines.append("- Image Quiz database unavailable. Set NOTION_IMAGE_DATABASE_ID to enable it.")
+    elif not image_summaries:
+        lines.append("- No Image Quiz rows found for this date.")
+    for item in image_summaries:
+        platforms = ", ".join(item["platforms"]) if item["platforms"] else "(none)"
+        flags = []
+        if item["due"]:
+            flags.append("due")
+        if item["has_image"]:
+            flags.append("image")
+        if item["has_caption"]:
+            flags.append("caption")
+        if item["has_prompt"]:
+            flags.append("prompt")
+        flag_text = ", ".join(flags) if flags else "not due/no media"
+        lines.append(f"- [{item['slot']}] {item['avatar']} | {item['status']} | platforms: {platforms} | {flag_text}")
     lines.append("")
 
     lines.append("## Recent GitHub Runs")
@@ -279,18 +407,23 @@ def render_report(rows: list[dict], now: datetime, target_date: str, lookback_ru
     return "\n".join(lines)
 
 
-def render_telegram_message(rows: list[dict], now: datetime, target_date: str) -> str:
+def render_telegram_message(rows: list[dict], image_rows: list[dict], now: datetime, target_date: str) -> str:
     summaries = [row_summary(row, now) for row in rows]
     issue_rows = [item for item in summaries if item["issues"]]
     ready_rows = [item for item in summaries if not item["issues"] and item["status"] == "A publier"]
     published_rows = [item for item in summaries if item["status"] == "Publie"]
+    image_summaries = [image_row_summary(row, now) for row in image_rows]
+    image_issue_rows = [item for item in image_summaries if item["issues"]]
+    image_ready_rows = [item for item in image_summaries if not item["issues"] and item["status"] == "A publier"]
+    image_published_rows = [item for item in image_summaries if item["status"] == "Publie"]
     run_url = os.getenv("GITHUB_SERVER_URL", "https://github.com")
     repository = os.getenv("GITHUB_REPOSITORY", "animman855-lab/video-automation")
     run_id = os.getenv("GITHUB_RUN_ID", "")
     github_run_url = f"{run_url}/{repository}/actions/runs/{run_id}" if run_id else ""
 
-    if issue_rows:
-        status_line = f"Saloo Watchdog: {len(issue_rows)} probleme(s) detecte(s)"
+    total_issues = len(issue_rows) + len(image_issue_rows)
+    if total_issues:
+        status_line = f"Saloo Watchdog: {total_issues} probleme(s) detecte(s)"
     else:
         status_line = "Saloo Watchdog: OK, aucun probleme detecte"
 
@@ -298,17 +431,23 @@ def render_telegram_message(rows: list[dict], now: datetime, target_date: str) -
         status_line,
         f"Date: {target_date}",
         f"Heure Montreal: {now.strftime('%H:%M')}",
-        f"Lignes: {len(rows)} | Publiees: {len(published_rows)} | Pretes: {len(ready_rows)}",
+        f"Videos: {len(published_rows)}/{len(rows)} publiees | {len(ready_rows)} pretes",
+        f"Image Quiz: {len(image_published_rows)}/{len(image_rows)} publies | {len(image_ready_rows)} prets",
     ]
 
-    if issue_rows:
+    if issue_rows or image_issue_rows:
         lines.append("")
         lines.append("A verifier:")
         for item in issue_rows[:8]:
             first_issue = item["issues"][0] if item["issues"] else "Probleme inconnu."
-            lines.append(f"- {item['slot']} {item['avatar']} ({item['status']}): {first_issue}")
-        if len(issue_rows) > 8:
-            lines.append(f"- +{len(issue_rows) - 8} autre(s) probleme(s) dans le rapport GitHub")
+            lines.append(f"- Video {item['slot']} {item['avatar']} ({item['status']}): {first_issue}")
+        remaining = max(0, 8 - len(issue_rows[:8]))
+        for item in image_issue_rows[:remaining]:
+            first_issue = item["issues"][0] if item["issues"] else "Probleme inconnu."
+            lines.append(f"- Quiz {item['slot']} {item['avatar']} ({item['status']}): {first_issue}")
+        shown = len(issue_rows[:8]) + len(image_issue_rows[:remaining])
+        if total_issues > shown:
+            lines.append(f"- +{total_issues - shown} autre(s) probleme(s) dans le rapport GitHub")
 
     if github_run_url:
         lines.append("")
@@ -325,7 +464,8 @@ def main() -> int:
     now = toronto_now()
     target_date = args.date or now.strftime("%Y-%m-%d")
     rows = query_rows_for_date(target_date)
-    report = render_report(rows, now, target_date, args.lookback_runs)
+    image_rows = query_image_rows_for_date(target_date)
+    report = render_report(rows, image_rows, now, target_date, args.lookback_runs)
     print(report)
     if args.output:
         output_path = Path(args.output)
@@ -334,7 +474,7 @@ def main() -> int:
     if args.telegram_output:
         telegram_path = Path(args.telegram_output)
         telegram_path.parent.mkdir(parents=True, exist_ok=True)
-        telegram_path.write_text(render_telegram_message(rows, now, target_date), encoding="utf-8")
+        telegram_path.write_text(render_telegram_message(rows, image_rows, now, target_date), encoding="utf-8")
     return 0
 
 
