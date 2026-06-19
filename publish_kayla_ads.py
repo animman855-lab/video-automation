@@ -26,6 +26,8 @@ REQUIRED_HASHTAGS = [
     "#speakenglish",
     "#salooenglish",
 ]
+YOUTUBE_TITLE_HASHTAGS = ["#english", "#learnenglish", "#englishlearning"]
+YOUTUBE_TITLE_MAX_LENGTH = 100
 
 SLOT_HOURS = {
     "00:00": 0,
@@ -231,9 +233,23 @@ def title_with_required_hashtags(title: str, max_chars: int = 150) -> str:
     return clean_title[: max_chars - 3].rstrip() + "..."
 
 
+def youtube_title_with_hashtags(title: str) -> str:
+    hashtag_line = " ".join(YOUTUBE_TITLE_HASHTAGS)
+    clean_title = " ".join((title or "").split()).strip()
+    clean_title = re.sub(r"#\w+", "", clean_title).strip()
+    clean_title = re.sub(r"\s+", " ", clean_title).strip(" -|")
+    available = YOUTUBE_TITLE_MAX_LENGTH - len(hashtag_line) - 1
+    if available < 25:
+        available = 25
+    if len(clean_title) > available:
+        clean_title = clean_title[:available].rstrip()
+        clean_title = clean_title.rsplit(" ", 1)[0].rstrip() or clean_title
+    return f"{clean_title} {hashtag_line}".strip()
+
+
 def upload_title_for_platform(title: str, platform_key: str) -> str:
     if platform_key == "youtube":
-        return title_with_required_hashtags(title, max_chars=90)
+        return youtube_title_with_hashtags(title)
     if platform_key == "tiktok":
         return title_with_required_hashtags(title, max_chars=150)
     return title
