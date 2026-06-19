@@ -1,0 +1,58 @@
+name: Publishing Watchdog
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Optional YYYY-MM-DD date to audit. Defaults to today in Montreal."
+        required: false
+        type: string
+  schedule:
+    - cron: "20 * * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: publishing-watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run read-only publishing watchdog
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            python hyperframes/scripts/publishing_watchdog.py --date "${{ inputs.date }}" --output watchdog-report.md
+          else
+            python hyperframes/scripts/publishing_watchdog.py --output watchdog-report.md
+          fi
+
+      - name: Add report to job summary
+        if: always()
+        run: |
+          if [ -f watchdog-report.md ]; then
+            cat watchdog-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No watchdog report was created." >> "$GITHUB_STEP_SUMMARY"
+          fi
