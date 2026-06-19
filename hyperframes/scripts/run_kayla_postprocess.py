@@ -45,7 +45,7 @@ def repo_root() -> Path:
 
 OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp4"
 CANVAS_SIZE = (1080, 1920)
-MAX_CARDS = 5
+MAX_CARDS = 3
 CARD_MAX_SECONDS = 12.4
 
 
@@ -415,6 +415,169 @@ def _extract_correction_cards_v2(text: str) -> list[KaylaCard]:
     return cards
 
 
+def _prompt_spoken_script(prompt: str) -> str:
+    match = re.search(r'Spoken script exactly:\s*"([^"]+)"', prompt or "", flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        return _clean_text(match.group(1), 420)
+    return ""
+
+
+def _sentence_parts(text: str) -> list[str]:
+    return [
+        part.strip(" \"'")
+        for part in re.split(r"(?<=[.!?])\s+", text.strip())
+        if part.strip(" \"'")
+    ]
+
+
+def _premium_line(text: str, max_chars: int = 44) -> str:
+    cleaned = _clean_text(_strip_card_label(_line_without_emoji(text)), max_chars)
+    cleaned = re.sub(r"^(not|say|better|repeat|saloo)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip(" .")
+
+
+def _dedupe_prompt_cards(cards: list[KaylaCard]) -> list[KaylaCard]:
+    deduped: list[KaylaCard] = []
+    seen: set[tuple[str, ...]] = set()
+    for card in cards:
+        lines = tuple(_premium_line(line, 68) for line in card.lines if _premium_line(line, 68))
+        if not lines:
+            continue
+        key = tuple(line.lower() for line in lines)
+        if key in seen:
+            continue
+        deduped.append(KaylaCard(card.emoji, card.title, lines, card.tone))
+        seen.add(key)
+        if len(deduped) >= MAX_CARDS:
+            break
+    return deduped
+
+
+def _extract_not_say_pairs(text: str, max_pairs: int = 3) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    patterns = [
+        r"(?:don't|dont|do not|not)\s+say:?\s*[\"'\u201c\u201d]?(.{2,72}?)[\"'\u201c\u201d]?(?:\.|\n|;)\s*(?:say|say this|instead|natural):?\s*[\"'\u201c\u201d]?(.{2,72}?)[\"'\u201c\u201d]?(?:\.|\n|;|$)",
+        r"not:?\s*[\"'\u201c\u201d]?(.{2,72}?)[\"'\u201c\u201d]?(?:\.|\n|;)\s*say:?\s*[\"'\u201c\u201d]?(.{2,72}?)[\"'\u201c\u201d]?(?:\.|\n|;|$)",
+    ]
+    for pattern in patterns:
+        for wrong, right in re.findall(pattern, text or "", flags=re.IGNORECASE | re.DOTALL):
+            wrong = _premium_line(wrong, 42)
+            right = _premium_line(right, 42)
+            if wrong and right and wrong.lower() != right.lower():
+                pairs.append((wrong, right))
+            if len(pairs) >= max_pairs:
+                return pairs
+    return pairs
+
+
+def _prompt_mini_lesson_cards(prompt: str) -> list[KaylaCard]:
+    source = _prompt_spoken_script(prompt) or prompt
+    cards = [
+        KaylaCard(E_RIGHT, "Premium subtitle", (wrong, right), "premium_correction")
+        for wrong, right in _extract_not_say_pairs(source, MAX_CARDS)
+    ]
+    return _dedupe_prompt_cards(cards)
+
+
+def _quoted_timing_value(prompt: str, second: str) -> str:
+    match = re.search(
+        rf"At\s+0:{re.escape(second)}.*?:\s*\"([^\"]+)\"",
+        prompt or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return _clean_text(match.group(1), 90) if match else ""
+
+
+def _extract_say_correction(text: str) -> str:
+    match = re.search(r"\bSay:\s*(.+)$", text or "", flags=re.IGNORECASE)
+    if match:
+        return _premium_line(match.group(1), 44)
+    return _premium_line(text, 44)
+
+
+def _prompt_saloo_demo_cards(prompt: str) -> list[KaylaCard]:
+    wrong = _quoted_timing_value(prompt, "02")
+    app_reply = _quoted_timing_value(prompt, "05")
+    repeat = _quoted_timing_value(prompt, "08")
+    correction = _extract_say_correction(app_reply)
+    cards: list[KaylaCard] = []
+    if wrong and correction:
+        cards.append(KaylaCard(E_RIGHT, "Premium subtitle", (wrong, correction), "premium_correction"))
+    elif wrong:
+        cards.append(KaylaCard(E_WRONG, "Premium subtitle", (wrong,), "premium_emphasis"))
+    if correction:
+        cards.append(KaylaCard(E_PHONE, "Premium subtitle", (f"Saloo corrects: {correction}",), "premium_saloo"))
+    if repeat:
+        cards.append(KaylaCard(E_SPEAK, "Premium subtitle", (f"Repeat: {repeat}",), "premium_repeat"))
+    return _dedupe_prompt_cards(cards)
+
+
+def _prompt_hook_cards(prompt: str) -> list[KaylaCard]:
+    script = _prompt_spoken_script(prompt)
+    if not script:
+        return []
+    parts = _sentence_parts(script)
+    if not parts:
+        return []
+    cards = [KaylaCard(E_CHAT, "Premium subtitle", (_premium_line(parts[0], 54),), "premium_hook")]
+    if len(parts) > 1:
+        benefit = next(
+            (part for part in parts[1:] if _contains(part, ["saloo", "practice", "correct", "conversation", "repeat"])),
+            parts[1],
+        )
+        cards.append(KaylaCard(E_SPEAK, "Premium subtitle", (_premium_line(benefit, 62),), "premium_benefit"))
+    return _dedupe_prompt_cards(cards)
+
+
+def _prompt_confession_cards(prompt: str) -> list[KaylaCard]:
+    script = _prompt_spoken_script(prompt)
+    if not script:
+        return []
+    parts = _sentence_parts(script)
+    if not parts:
+        return []
+    problem = parts[0]
+    transformation = next(
+        (part for part in parts[1:] if _contains(part, ["now", "saloo", "help", "practice", "confidence"])),
+        parts[-1],
+    )
+    return _dedupe_prompt_cards(
+        [
+            KaylaCard(E_NERVOUS, "Premium subtitle", (_premium_line(problem, 58),), "premium_hook"),
+            KaylaCard(E_SPARK, "Premium subtitle", (_premium_line(transformation, 62),), "premium_benefit"),
+        ]
+    )
+
+
+def _prompt_specific_cards(prompt: str) -> list[KaylaCard]:
+    script = _prompt_spoken_script(prompt)
+    if not script:
+        return []
+    parts = _sentence_parts(script)
+    selected = parts[:2] if len(parts) > 1 else parts
+    return _dedupe_prompt_cards(
+        [KaylaCard(E_CHAT, "Premium subtitle", (_premium_line(part, 62),), "premium_benefit") for part in selected]
+    )
+
+
+def _prompt_first_cards(title: str, prompt: str) -> list[KaylaCard]:
+    video_format = _classify_kayla_format("", prompt, title)
+    if video_format == "mini_lesson":
+        cards = _prompt_mini_lesson_cards(prompt)
+    elif video_format == "saloo_demo":
+        cards = _prompt_saloo_demo_cards(prompt)
+    elif video_format == "confession":
+        cards = _prompt_confession_cards(prompt)
+    elif video_format == "specific_situation":
+        cards = _prompt_specific_cards(prompt)
+    else:
+        cards = _prompt_hook_cards(prompt)
+    if cards:
+        return cards[:MAX_CARDS]
+    fallback = _subtitle_cards(_prompt_spoken_script(prompt))[:MAX_CARDS]
+    return [KaylaCard(card.emoji, card.title, card.lines, "premium_hook") for card in fallback]
+
+
 def _field_value(script: str, label: str) -> str:
     value = _extract_field(script, label)
     if value and not _is_visual_direction(value):
@@ -542,10 +705,17 @@ def _editorial_cards(title: str, script: str, prompt: str) -> list[KaylaCard]:
 
 
 def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard]:
+    if not (prompt or "").strip():
+        return []
+
+    prompt_cards = _prompt_first_cards(title, prompt)
+    if prompt_cards:
+        return prompt_cards[:MAX_CARDS]
+
     combined = f"{title}\n{script}\n{prompt}"
     explicit_cards = _explicit_cards(script)
     if len(explicit_cards) >= 2:
-        return explicit_cards
+        return explicit_cards[:MAX_CARDS]
 
     video_format = _classify_kayla_format(script, prompt, title)
     problem_icon, problem_line = _card_problem(combined)
@@ -553,7 +723,7 @@ def build_kayla_cards_v2(title: str, script: str, prompt: str) -> list[KaylaCard
     corrections = _extract_correction_cards_v2(combined)
     editorial_cards = _editorial_cards(title, script, prompt)
     if len(editorial_cards) >= 2:
-        return editorial_cards
+        return editorial_cards[:MAX_CARDS]
 
     if video_format == "mini_lesson":
         cards = [KaylaCard(E_WARN, "Quick English fix", ("Stop sounding translated",), "hook")]
@@ -749,59 +919,60 @@ def _draw_icon(
 def render_card_png(card: KaylaCard, output_path: Path) -> Path:
     image = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    text_font = _font(50, bold=True)
-    icon_font = _font(24, bold=True)
+    text_font = _font(64, bold=True)
+    small_font = _font(58, bold=True)
 
     def strip_text(raw: str, max_chars: int = 54) -> str:
         return _clean_text(_strip_card_label(_line_without_emoji(raw)), max_chars)
 
-    if card.tone == "correction" and len(card.lines) >= 2:
-        rows = [(E_WRONG, strip_text(card.lines[0], 44)), (E_RIGHT, strip_text(card.lines[1], 44))]
-    elif card.tone in {"hook", "myth", "truth", "subtitle"}:
-        main = strip_text(card.lines[0] if card.lines else card.title, 56)
-        rows = [(card.emoji, main)]
+    if card.tone in {"correction", "premium_correction"} and len(card.lines) >= 2:
+        rows = [
+            (strip_text(card.lines[0], 40), (255, 107, 107, 255), small_font),
+            (strip_text(card.lines[1], 40), (90, 242, 164, 255), text_font),
+        ]
     else:
-        main = strip_text(card.lines[0] if card.lines else card.title, 56)
-        rows = [(card.emoji, main)]
+        color = (255, 255, 255, 255)
+        if card.tone in {"premium_benefit", "premium_saloo", "premium_repeat"}:
+            color = (90, 242, 164, 255)
+        text = strip_text(card.lines[0] if card.lines else card.title, 62)
+        rows = [(text, color, text_font)]
 
-    max_strip_width = 900
-    strips: list[tuple[str, list[str], tuple[int, int, int], str, int, int]] = []
+    wrapped_rows: list[tuple[list[str], tuple[int, int, int, int], ImageFont.ImageFont]] = []
     total_height = 0
-    for symbol, text in rows:
-        label, color, shape = _icon_style(symbol, card.tone)
-        icon_width = 128 if shape == "pill" and len(label) > 3 else 88
-        available_width = max_strip_width - icon_width - 78
-        wrapped_lines = _wrap_line(draw, text, text_font, available_width)[:2]
-        if not wrapped_lines:
-            wrapped_lines = [text]
-        text_width = max(draw.textbbox((0, 0), line, font=text_font)[2] for line in wrapped_lines)
-        strip_width = min(max_strip_width, max(620, icon_width + text_width + 118))
-        strip_height = 104 if len(wrapped_lines) == 1 else 154
-        strips.append((label, wrapped_lines, color, shape, strip_width, strip_height))
-        total_height += strip_height + 18
-    total_height -= 18
+    max_width = 900
+    for text, color, font in rows:
+        wrapped = _wrap_line(draw, text, font, max_width)[:2] or [text]
+        line_height = 72 if font == text_font else 66
+        wrapped_rows.append((wrapped, color, font))
+        total_height += len(wrapped) * line_height + 10
+    total_height = max(0, total_height - 10)
 
-    y = 760 if card.tone in {"hook", "myth"} else 850
-    y = min(y, 1120 - total_height)
-    for label, wrapped_lines, color, shape, strip_width, strip_height in strips:
-        x0 = (1080 - strip_width) // 2
-        x1 = x0 + strip_width
-        y1 = y + strip_height
-        draw.rounded_rectangle((x0 + 6, y + 8, x1 + 6, y1 + 8), radius=16, fill=(0, 0, 0, 88))
-        draw.rounded_rectangle((x0, y, x1, y1), radius=16, fill=(255, 255, 255, 250))
-
-        icon_x = x0 + 22
-        icon_y = y + 20
-        icon_width = _draw_icon(draw, icon_x, icon_y, label, color, shape, icon_font)
-
-        text_x = icon_x + icon_width + 26
-        line_height = 54
-        text_block_height = len(wrapped_lines) * line_height
-        text_y = y + (strip_height - text_block_height) // 2 - 5
-        for line in wrapped_lines:
-            draw.text((text_x, text_y), line, font=text_font, fill=(14, 18, 24, 255))
-            text_y += line_height
-        y = y1 + 18
+    y = 1230 if len(rows) == 1 else 1180
+    y = min(y, 1500 - total_height)
+    for wrapped, color, font in wrapped_rows:
+        line_height = 72 if font == text_font else 66
+        for line in wrapped:
+            bbox = draw.textbbox((0, 0), line, font=font, stroke_width=3)
+            width = bbox[2] - bbox[0]
+            x = (1080 - width) // 2
+            draw.text(
+                (x + 4, y + 5),
+                line,
+                font=font,
+                fill=(0, 0, 0, 145),
+                stroke_width=5,
+                stroke_fill=(0, 0, 0, 120),
+            )
+            draw.text(
+                (x, y),
+                line,
+                font=font,
+                fill=color,
+                stroke_width=3,
+                stroke_fill=(0, 0, 0, 220),
+            )
+            y += line_height
+        y += 10
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
@@ -827,16 +998,16 @@ def _card_windows(cards: list[KaylaCard], duration: float) -> list[tuple[float, 
     if card_count <= 0:
         return []
     tones = {card.tone for card in cards}
-    start = 0.35 if "correction" in tones else 0.55
+    start = 0.35 if tones.intersection({"correction", "premium_correction"}) else 0.55
     active_duration = min(duration, CARD_MAX_SECONDS)
-    if "phone" in tones:
+    if tones.intersection({"phone", "premium_saloo"}):
         active_duration = min(duration, 10.8)
-    elif "correction" in tones:
+    elif tones.intersection({"correction", "premium_correction"}):
         active_duration = min(duration, 13.2)
     end_limit = max(start + 1.0, active_duration - 0.55)
     span = max(1.0, end_limit - start)
     slot = span / card_count
-    visible = min(2.4, max(1.2, slot * 0.78))
+    visible = min(3.2, max(1.8, slot * 0.82))
     return [(start + index * slot, min(start + index * slot + visible, end_limit)) for index in range(card_count)]
 
 
@@ -907,9 +1078,7 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     normalized_source = work_dir / "source_normalized.mp4"
-    source_with_cards = work_dir / "source_with_cards.mp4"
     normalized_outro = work_dir / "outro_normalized.mp4"
-    concat_file = work_dir / "concat.txt"
 
     if not OUTRO_ASSET.exists() or OUTRO_ASSET.stat().st_size < 1024:
         raise RuntimeError(f"Missing Kayla outro asset: {OUTRO_ASSET}")
@@ -966,10 +1135,10 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
             str(normalized_source),
         ]
     _run_ffmpeg(normalize_cmd)
-    overlay_cards(ffmpeg, normalized_source, source_with_cards, cards, work_dir / "cards")
 
     normalized_source_duration = _video_duration_seconds(ffmpeg, normalized_source)
     print(f"Source video duration before outro: {normalized_source_duration:.2f}s")
+    print("Kayla cards disabled. Keeping Flow video clean and adding outro only.")
     print("Appending Kayla outro asset.")
 
     if _video_has_audio(ffmpeg, OUTRO_ASSET):
@@ -1024,22 +1193,36 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
         ]
     _run_ffmpeg(outro_cmd)
 
-    concat_file.write_text(
-        f"file '{source_with_cards.as_posix()}'\nfile '{normalized_outro.as_posix()}'\n",
-        encoding="utf-8",
-    )
     _run_ffmpeg(
         [
             ffmpeg,
             "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
             "-i",
-            str(concat_file),
-            "-c",
-            "copy",
+            str(normalized_source),
+            "-i",
+            str(normalized_outro),
+            "-filter_complex",
+            "[0:v]setsar=1[v0];[1:v]setsar=1[v1];"
+            "[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];"
+            "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]",
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-r",
+            "30",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-movflags",
+            "+faststart",
             str(output_video),
         ]
     )
@@ -1118,15 +1301,8 @@ def execute(target_date: str) -> int:
     work_dir = Path(tempfile.mkdtemp(prefix="kayla_postprocess_"))
     try:
         source_path = download_source_video(source_url, work_dir / "source_flow.mp4")
-        cards = build_kayla_cards_v2(
-            title=prop_text(props, "Titre"),
-            script=prop_text(props, "Script"),
-            prompt=prop_text(props, "Prompt 1"),
-        )
-        print(f"Kayla smart cards: {len(cards)}")
-        for index, card in enumerate(cards, start=1):
-            label, _, _ = _icon_style(card.emoji, card.tone)
-            print(f"  card_{index}: {label} {card.title} | {' / '.join(card.lines)}")
+        cards: list[KaylaCard] = []
+        print("Kayla smart cards: 0 (disabled)")
         final_path = render_final_video(source_path, work_dir / _output_name(selected), work_dir, cards)
         drive_url = upload_video_make_public(final_path, final_path.name)
         if not drive_url:
