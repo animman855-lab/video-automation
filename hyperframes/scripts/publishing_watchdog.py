@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--date", help="YYYY-MM-DD. Defaults to today in Montreal.")
     parser.add_argument("--lookback-runs", type=int, default=5, help="GitHub Actions runs to summarize per workflow.")
     parser.add_argument("--output", help="Optional markdown report path.")
+    parser.add_argument("--telegram-output", help="Optional short Telegram message path.")
     return parser.parse_args()
 
 
@@ -278,6 +279,46 @@ def render_report(rows: list[dict], now: datetime, target_date: str, lookback_ru
     return "\n".join(lines)
 
 
+def render_telegram_message(rows: list[dict], now: datetime, target_date: str) -> str:
+    summaries = [row_summary(row, now) for row in rows]
+    issue_rows = [item for item in summaries if item["issues"]]
+    ready_rows = [item for item in summaries if not item["issues"] and item["status"] == "A publier"]
+    published_rows = [item for item in summaries if item["status"] == "Publie"]
+    run_url = os.getenv("GITHUB_SERVER_URL", "https://github.com")
+    repository = os.getenv("GITHUB_REPOSITORY", "animman855-lab/video-automation")
+    run_id = os.getenv("GITHUB_RUN_ID", "")
+    github_run_url = f"{run_url}/{repository}/actions/runs/{run_id}" if run_id else ""
+
+    if issue_rows:
+        status_line = f"Saloo Watchdog: {len(issue_rows)} probleme(s) detecte(s)"
+    else:
+        status_line = "Saloo Watchdog: OK, aucun probleme detecte"
+
+    lines = [
+        status_line,
+        f"Date: {target_date}",
+        f"Heure Montreal: {now.strftime('%H:%M')}",
+        f"Lignes: {len(rows)} | Publiees: {len(published_rows)} | Pretes: {len(ready_rows)}",
+    ]
+
+    if issue_rows:
+        lines.append("")
+        lines.append("A verifier:")
+        for item in issue_rows[:8]:
+            first_issue = item["issues"][0] if item["issues"] else "Probleme inconnu."
+            lines.append(f"- {item['slot']} {item['avatar']} ({item['status']}): {first_issue}")
+        if len(issue_rows) > 8:
+            lines.append(f"- +{len(issue_rows) - 8} autre(s) probleme(s) dans le rapport GitHub")
+
+    if github_run_url:
+        lines.append("")
+        lines.append(f"Rapport complet: {github_run_url}")
+
+    lines.append("")
+    lines.append("Read-only: rien n'a ete modifie.")
+    return "\n".join(lines)
+
+
 def main() -> int:
     args = parse_args()
     load_local_env(repo_root())
@@ -290,6 +331,10 @@ def main() -> int:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(report, encoding="utf-8")
+    if args.telegram_output:
+        telegram_path = Path(args.telegram_output)
+        telegram_path.parent.mkdir(parents=True, exist_ok=True)
+        telegram_path.write_text(render_telegram_message(rows, now, target_date), encoding="utf-8")
     return 0
 
 

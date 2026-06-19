@@ -43,9 +43,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           if [ -n "${{ inputs.date }}" ]; then
-            python hyperframes/scripts/publishing_watchdog.py --date "${{ inputs.date }}" --output watchdog-report.md
+            python hyperframes/scripts/publishing_watchdog.py --date "${{ inputs.date }}" --output watchdog-report.md --telegram-output telegram-message.txt
           else
-            python hyperframes/scripts/publishing_watchdog.py --output watchdog-report.md
+            python hyperframes/scripts/publishing_watchdog.py --output watchdog-report.md --telegram-output telegram-message.txt
           fi
 
       - name: Add report to job summary
@@ -56,3 +56,10 @@ jobs:
           else
             echo "No watchdog report was created." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Send Telegram alert
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python hyperframes/scripts/send_telegram_message.py telegram-message.txt
