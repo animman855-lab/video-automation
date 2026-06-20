@@ -21,6 +21,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: kayla-whisper-base-v1
+
       - name: Installer les dependances
         run: pip install -r requirements.txt
 
@@ -36,6 +42,8 @@ jobs:
           GOOGLE_CLIENT_SECRET:         ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN:         ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           GOOGLE_DRIVE_FOLDER_ID:       ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          KAYLA_AUTO_SUBTITLES:         "1"
+          KAYLA_WHISPER_MODEL:          "base"
         run: python hyperframes/scripts/run_kayla_postprocess.py --execute
 
       - name: Publier une video Kayla Ads
