@@ -47,6 +47,8 @@ OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp
 CANVAS_SIZE = (1080, 1920)
 MAX_CARDS = 3
 CARD_MAX_SECONDS = 12.4
+KAYLA_WHISPER_MODEL = os.getenv("KAYLA_WHISPER_MODEL", "base")
+KAYLA_SUBTITLES_ENABLED = os.getenv("KAYLA_AUTO_SUBTITLES", "1").strip().lower() not in {"0", "false", "no"}
 
 
 @dataclass(frozen=True)
@@ -1073,10 +1075,195 @@ def _video_has_audio(ffmpeg: str, video_path: Path) -> bool:
     return "Audio:" in completed.stderr
 
 
+def _ass_timestamp(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    whole_seconds = int(seconds % 60)
+    centiseconds = int(round((seconds - int(seconds)) * 100))
+    if centiseconds >= 100:
+        whole_seconds += 1
+        centiseconds -= 100
+    return f"{hours}:{minutes:02d}:{whole_seconds:02d}.{centiseconds:02d}"
+
+
+def _escape_ass_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = cleaned.replace("{", "").replace("}", "")
+    return cleaned
+
+
+def _wrap_subtitle_words(words: list[str], max_chars: int = 28) -> str:
+    if not words:
+        return ""
+    lines: list[str] = []
+    current: list[str] = []
+    for word in words:
+        candidate = " ".join([*current, word]).strip()
+        if current and len(candidate) > max_chars and len(lines) < 1:
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        lines.append(" ".join(current))
+    return r"\N".join(lines[:2])
+
+
+def _chunk_word_timings(words: list[object]) -> list[tuple[float, float, str]]:
+    chunks: list[tuple[float, float, str]] = []
+    current_words: list[str] = []
+    start: float | None = None
+    end: float | None = None
+
+    for word_info in words:
+        text = _escape_ass_text(getattr(word_info, "word", "")).strip()
+        if not text:
+            continue
+        if start is None:
+            start = float(getattr(word_info, "start", 0.0) or 0.0)
+        end = float(getattr(word_info, "end", start + 1.0) or start + 1.0)
+        current_words.append(text)
+        joined = " ".join(current_words)
+        if len(current_words) >= 5 or len(joined) >= 34:
+            chunks.append((start, max(end, start + 0.65), _wrap_subtitle_words(current_words)))
+            current_words = []
+            start = None
+            end = None
+
+    if current_words and start is not None:
+        chunks.append((start, max(end or start + 1.0, start + 0.65), _wrap_subtitle_words(current_words)))
+    return chunks
+
+
+def _extract_audio_for_whisper(ffmpeg: str, video_path: Path, audio_path: Path) -> Path:
+    _run_ffmpeg(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(video_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-t",
+            "90",
+            str(audio_path),
+        ]
+    )
+    if not audio_path.exists() or audio_path.stat().st_size < 1024:
+        raise RuntimeError("Whisper audio extraction failed.")
+    return audio_path
+
+
+def _transcribe_kayla_audio(audio_path: Path) -> list[tuple[float, float, str]]:
+    from faster_whisper import WhisperModel
+
+    print(f"Kayla auto-subtitles: loading faster-whisper model '{KAYLA_WHISPER_MODEL}' on CPU.")
+    model = WhisperModel(KAYLA_WHISPER_MODEL, device="cpu", compute_type="int8")
+    segments, info = model.transcribe(
+        str(audio_path),
+        language="en",
+        beam_size=1,
+        vad_filter=True,
+        word_timestamps=True,
+    )
+    print(f"Kayla auto-subtitles: detected language={info.language} probability={info.language_probability:.2f}")
+
+    cues: list[tuple[float, float, str]] = []
+    for segment in segments:
+        word_timings = getattr(segment, "words", None)
+        if word_timings:
+            cues.extend(_chunk_word_timings(list(word_timings)))
+            continue
+        text = _escape_ass_text(getattr(segment, "text", ""))
+        if text:
+            start = float(getattr(segment, "start", 0.0) or 0.0)
+            end = float(getattr(segment, "end", start + 1.0) or start + 1.0)
+            cues.append((start, max(end, start + 0.8), _wrap_subtitle_words(text.split())))
+
+    filtered = [(start, end, text) for start, end, text in cues if text.strip()]
+    print(f"Kayla auto-subtitles: {len(filtered)} subtitle cue(s) created.")
+    return filtered
+
+
+def _write_ass_subtitles(cues: list[tuple[float, float, str]], ass_path: Path) -> Path:
+    header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: KaylaSub,Arial,72,&H00FFFFFF,&H00FFFFFF,&HAA000000,&H88000000,-1,0,0,0,100,100,0,0,1,5,1,2,90,90,360,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    events = []
+    for start, end, text in cues:
+        events.append(f"Dialogue: 0,{_ass_timestamp(start)},{_ass_timestamp(end)},KaylaSub,,0,0,0,,{text}")
+    ass_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    return ass_path
+
+
+def _ffmpeg_filter_path(path: Path) -> str:
+    # FFmpeg filters parse ':' and '\' specially, even on Windows.
+    return str(path.resolve()).replace("\\", "/").replace(":", r"\:")
+
+
+def add_auto_subtitles(ffmpeg: str, source_video: Path, output_video: Path, work_dir: Path) -> Path:
+    if not KAYLA_SUBTITLES_ENABLED:
+        print("Kayla auto-subtitles disabled by KAYLA_AUTO_SUBTITLES.")
+        shutil.copyfile(source_video, output_video)
+        return output_video
+    if not _video_has_audio(ffmpeg, source_video):
+        print("Kayla auto-subtitles skipped: source has no audio.")
+        shutil.copyfile(source_video, output_video)
+        return output_video
+
+    try:
+        audio_path = _extract_audio_for_whisper(ffmpeg, source_video, work_dir / "kayla_whisper.wav")
+        cues = _transcribe_kayla_audio(audio_path)
+        if not cues:
+            raise RuntimeError("Whisper returned no subtitles.")
+        ass_path = _write_ass_subtitles(cues, work_dir / "kayla_subtitles.ass")
+        _run_ffmpeg(
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                str(source_video),
+                "-vf",
+                f"ass='{_ffmpeg_filter_path(ass_path)}'",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                str(output_video),
+            ]
+        )
+        if not output_video.exists() or output_video.stat().st_size < 1024:
+            raise RuntimeError("Subtitled Kayla source was not created correctly.")
+        print("Kayla auto-subtitles added successfully.")
+        return output_video
+    except Exception as exc:
+        print(f"Kayla auto-subtitles skipped safely: {exc}")
+        shutil.copyfile(source_video, output_video)
+        return output_video
+
+
 def render_final_video(source_video: Path, output_video: Path, work_dir: Path, cards: list[KaylaCard]) -> Path:
     import imageio_ffmpeg
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    normalized_source_plain = work_dir / "source_normalized_plain.mp4"
     normalized_source = work_dir / "source_normalized.mp4"
     normalized_outro = work_dir / "outro_normalized.mp4"
 
@@ -1105,7 +1292,7 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
             "-ac",
             "2",
             "-shortest",
-            str(normalized_source),
+            str(normalized_source_plain),
         ]
     else:
         normalize_cmd = [
@@ -1132,13 +1319,14 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
             "-ac",
             "2",
             "-shortest",
-            str(normalized_source),
+            str(normalized_source_plain),
         ]
     _run_ffmpeg(normalize_cmd)
+    add_auto_subtitles(ffmpeg, normalized_source_plain, normalized_source, work_dir)
 
     normalized_source_duration = _video_duration_seconds(ffmpeg, normalized_source)
     print(f"Source video duration before outro: {normalized_source_duration:.2f}s")
-    print("Kayla cards disabled. Keeping Flow video clean and adding outro only.")
+    print("Kayla cards disabled. Keeping Flow video clean, adding auto-subtitles, then outro.")
     print("Appending Kayla outro asset.")
 
     if _video_has_audio(ffmpeg, OUTRO_ASSET):
