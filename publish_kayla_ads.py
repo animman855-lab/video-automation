@@ -2,6 +2,7 @@ import argparse
 import os
 import re
 from datetime import datetime
+from pathlib import Path
 
 import anthropic
 import pytz
@@ -94,7 +95,6 @@ def query_kayla_ads(target_date):
                 {"property": "Video Type", "select": {"equals": "Visual Vocabulary"}},
                 {"property": "Statut", "select": {"equals": "A publier"}},
                 {"property": "Date Publication", "date": {"equals": target_date}},
-                {"property": "Lien Video", "url": {"is_not_empty": True}},
             ]
         },
         "sorts": [
@@ -112,6 +112,26 @@ def query_kayla_ads(target_date):
     print("NOTION STATUS:", response.status_code)
     response.raise_for_status()
     return response.json().get("results", [])
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def local_output_dir() -> Path:
+    configured = os.getenv("KAYLA_OUTPUT_DIR", "kayla-output").strip() or "kayla-output"
+    output_dir = Path(configured)
+    if not output_dir.is_absolute():
+        output_dir = repo_root() / output_dir
+    return output_dir
+
+
+def local_kayla_video_path(row: dict) -> Path:
+    props = row.get("properties", {})
+    date = get_text(props.get("Date Publication"))
+    slot = get_text(props.get("Slot")).replace(":", "")
+    page_id = row.get("id", "")[:8]
+    return local_output_dir() / f"kayla-flow-final-{date}-{slot}-{page_id}.mp4"
 
 
 def generate_kayla_ad_metadata(script, platforms):
@@ -405,9 +425,11 @@ def main():
     print(f"Kayla Ads target date: {today}")
 
     rows = query_kayla_ads(today)
-    print(f"Ready Kayla ad row(s) with video link: {len(rows)}")
+    print(f"Ready Kayla ad row(s): {len(rows)}")
+    print(f"Local Kayla output dir: {local_output_dir()}")
 
     selected = None
+    selected_local_video = None
     for row in rows:
         props = row.get("properties", {})
         slot = get_text(props.get("Slot"))
@@ -415,11 +437,17 @@ def main():
         if not slot_is_due(slot, now):
             print(f"Skipping {title}: slot {slot} not due.")
             continue
+        local_video = local_kayla_video_path(row)
+        video_url = get_text(props.get("Lien Video"))
+        if not local_video.exists() and not video_url:
+            print(f"Skipping {title}: no local MP4 and no Lien Video.")
+            continue
         selected = row
+        selected_local_video = local_video if local_video.exists() else None
         break
 
     if not selected:
-        print("No due Kayla ad row found. Nothing to publish.")
+        print("No due Kayla ad row with an available video found. Nothing to publish.")
         return 0
 
     props = selected["properties"]
@@ -435,21 +463,27 @@ def main():
     print(f"Selected Kayla ad: {notion_title}")
     print(f"Slot: {slot}")
     print(f"Platforms: {platforms}")
+    if selected_local_video:
+        print(f"Video source: local MP4 ({selected_local_video})")
+    elif video_url:
+        print("Video source: Notion Lien Video")
     if script:
         print("Metadata context source: Script")
     elif prompt:
         print("Metadata context source: Prompt 1")
     else:
         print("Metadata context source: generic Kayla/Saloo fallback")
-    if not video_url:
-        print("No video link - skipping.")
-        return 0
     if not platforms:
         print("No platforms - skipping.")
         return 0
 
     metadata = generate_kayla_ad_metadata(context, platforms)
-    video_path = download_video(video_url)
+    delete_video_after = False
+    if selected_local_video:
+        video_path = str(selected_local_video)
+    else:
+        video_path = download_video(video_url)
+        delete_video_after = True
     successes = 0
     failures = 0
 
@@ -477,7 +511,7 @@ def main():
                 failures += 1
                 print(f"  {platform} failed/skipped")
     finally:
-        if os.path.exists(video_path):
+        if delete_video_after and os.path.exists(video_path):
             os.remove(video_path)
 
     print(f"Kayla Ads result: successes={successes} failures={failures}")

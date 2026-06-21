@@ -38,13 +38,20 @@ jobs:
         env:
           NOTION_TOKEN:                 ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID:           ${{ secrets.NOTION_DATABASE_ID }}
-          GOOGLE_CLIENT_ID:             ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET:         ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REFRESH_TOKEN:         ${{ secrets.GOOGLE_REFRESH_TOKEN }}
-          GOOGLE_DRIVE_FOLDER_ID:       ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           KAYLA_AUTO_SUBTITLES:         "1"
           KAYLA_WHISPER_MODEL:          "base"
+          KAYLA_OUTPUT_DIR:             "${{ runner.temp }}/kayla-output"
+          KAYLA_UPLOAD_DRIVE:           "0"
         run: python hyperframes/scripts/run_kayla_postprocess.py --execute
+
+      - name: Sauvegarder la video Kayla finale
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kayla-final-video
+          path: ${{ runner.temp }}/kayla-output/*.mp4
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Publier une video Kayla Ads
         env:
@@ -52,4 +59,5 @@ jobs:
           NOTION_DATABASE_ID:  ${{ secrets.NOTION_DATABASE_ID }}
           UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          KAYLA_OUTPUT_DIR:    "${{ runner.temp }}/kayla-output"
         run: python publish_kayla_ads.py

@@ -80,7 +80,7 @@ def slot_is_due(slot_name: str, now: datetime | None = None) -> bool:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Post-process one due Kayla Flow video before publication.")
-    parser.add_argument("--execute", action="store_true", help="Create final video, upload it, and fill Lien Video.")
+    parser.add_argument("--execute", action="store_true", help="Create final video for publication.")
     parser.add_argument("--date", help="YYYY-MM-DD. Defaults to today in Montreal.")
     return parser.parse_args()
 
@@ -1427,6 +1427,19 @@ def _output_name(row: dict) -> str:
     return f"kayla-flow-final-{date}-{slot}-{page_id}.mp4"
 
 
+def _local_output_dir() -> Path:
+    configured = os.getenv("KAYLA_OUTPUT_DIR", "kayla-output").strip() or "kayla-output"
+    output_dir = Path(configured)
+    if not output_dir.is_absolute():
+        output_dir = repo_root() / output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def _drive_upload_enabled() -> bool:
+    return os.getenv("KAYLA_UPLOAD_DRIVE", "1").strip().lower() not in {"0", "false", "no"}
+
+
 def _select_due_row(rows: list[dict], now: datetime) -> dict | None:
     for row in rows:
         props = row.get("properties", {})
@@ -1455,10 +1468,12 @@ def dry_run(target_date: str) -> int:
     rows = query_ready_kayla_flow_rows(target_date)
     selected = _select_due_row(rows, now)
     print("KAYLA POST-PROCESS DRY-RUN")
-    print("No video render, Drive upload, TTS, Notion update, or publication will run.")
+    print("No video render, optional Drive upload, Notion update, or publication will run.")
     print(f"Current time (Montreal): {now.strftime('%Y-%m-%d %H:%M')}")
     print(f"Target date: {target_date}")
     print(f"Ready source row(s): {len(rows)}")
+    print(f"Local output dir: {_local_output_dir()}")
+    print(f"Drive upload enabled: {_drive_upload_enabled()}")
     print(f"Drive missing: {', '.join(check_drive_secrets()) or 'none'}")
     print(f"Outro asset present: {OUTRO_ASSET.exists()}")
     if selected:
@@ -1492,12 +1507,19 @@ def execute(target_date: str) -> int:
         cards: list[KaylaCard] = []
         print("Kayla smart cards: 0 (disabled)")
         final_path = render_final_video(source_path, work_dir / _output_name(selected), work_dir, cards)
-        drive_url = upload_video_make_public(final_path, final_path.name)
-        if not drive_url:
-            raise RuntimeError("Google Drive upload returned an empty URL.")
-        set_video_link(selected["id"], drive_url)
-        print("Kayla final video ready. Notion Lien Video filled. Statut remains A publier.")
-        print(f"Drive URL: {drive_url}")
+        local_final_path = _local_output_dir() / final_path.name
+        shutil.copy2(final_path, local_final_path)
+        print(f"Kayla final video ready locally: {local_final_path}")
+
+        if _drive_upload_enabled():
+            drive_url = upload_video_make_public(local_final_path, local_final_path.name)
+            if not drive_url:
+                raise RuntimeError("Google Drive upload returned an empty URL.")
+            set_video_link(selected["id"], drive_url)
+            print("Notion Lien Video filled from Drive. Statut remains A publier.")
+            print(f"Drive URL: {drive_url}")
+        else:
+            print("Drive upload disabled. Notion Lien Video left unchanged; publisher will use local MP4.")
         return 0
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
