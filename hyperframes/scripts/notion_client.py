@@ -165,6 +165,15 @@ def set_video_link(page_id: str, drive_url: str) -> dict:
     )
 
 
+def set_status_ready_to_publish(page_id: str) -> dict:
+    return patch_page(
+        page_id,
+        {
+            "Statut": {"select": {"name": "A publier"}},
+        },
+    )
+
+
 def prop_text(props: dict, name: str) -> str:
     prop = props.get(name)
     if not prop:

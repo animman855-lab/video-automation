@@ -19,6 +19,7 @@ from notion_client import (
     prop_text,
     query_ready_hyperframes_rows,
     set_ready_to_publish,
+    set_status_ready_to_publish,
 )
 from podcast_parser import parse_podcast_script
 from render_cindy_podcast import render_cindy_podcast_video
@@ -146,8 +147,10 @@ def dry_run() -> int:
     print("HYPERFRAMES DRY-RUN")
     print("No paid calls will be made.")
     print("No Notion update will be made.")
-    print("No audio, video, Drive upload, or Upload-Post publication will run.")
+    print("No audio, video, optional Drive upload, or Upload-Post publication will run.")
     print(f"Max videos per run: {max_videos_per_run()}")
+    print(f"Local output dir: {_local_output_dir()}")
+    print(f"Drive upload enabled: {_drive_upload_enabled()}")
     print("")
 
     if not rows:
@@ -169,6 +172,19 @@ def _output_name(row: dict) -> str:
     slot = prop_text(props, "Slot").replace(":", "")
     page_id = row.get("id", "")[:8]
     return f"hyperframes-{avatar}-{date}-{slot}-{page_id}.mp4"
+
+
+def _local_output_dir() -> Path:
+    configured = os.getenv("HYPERFRAMES_OUTPUT_DIR", "hyperframes-output").strip() or "hyperframes-output"
+    output_dir = Path(configured)
+    if not output_dir.is_absolute():
+        output_dir = repo_root() / output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def _drive_upload_enabled() -> bool:
+    return os.getenv("HYPERFRAMES_UPLOAD_DRIVE", "1").strip().lower() not in {"0", "false", "no"}
 
 
 def _teacher_ryan_fixed_targets(items: list[str]) -> dict[str, tuple[int, int]]:
@@ -382,11 +398,19 @@ def _execute_row(row: dict) -> bool:
     work_dir = Path(tempfile.mkdtemp(prefix="hyperframes_"))
     try:
         video_path = _render_row(row, work_dir)
-        drive_url = upload_video_make_public(video_path, video_path.name)
-        require_non_empty(drive_url, "Google Drive public URL")
-        set_ready_to_publish(row["id"], drive_url)
-        print("HyperFrames row completed. Notion Lien Video filled and Statut set to A publier.")
-        print(f"Drive URL: {drive_url}")
+        local_video_path = _local_output_dir() / video_path.name
+        shutil.copy2(video_path, local_video_path)
+        print(f"HyperFrames final video ready locally: {local_video_path}")
+
+        if _drive_upload_enabled():
+            drive_url = upload_video_make_public(local_video_path, local_video_path.name)
+            require_non_empty(drive_url, "Google Drive public URL")
+            set_ready_to_publish(row["id"], drive_url)
+            print("HyperFrames row completed. Notion Lien Video filled and Statut set to A publier.")
+            print(f"Drive URL: {drive_url}")
+        else:
+            set_status_ready_to_publish(row["id"])
+            print("Drive upload disabled. Statut set to A publier; publisher will use local MP4.")
         return True
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

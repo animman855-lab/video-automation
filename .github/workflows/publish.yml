@@ -45,11 +45,18 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           GOOGLE_TTS_CREDENTIALS_JSON: ${{ secrets.GOOGLE_TTS_CREDENTIALS_JSON }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
-          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          HYPERFRAMES_OUTPUT_DIR: ${{ runner.temp }}/hyperframes-output
+          HYPERFRAMES_UPLOAD_DRIVE: "0"
         run: python hyperframes/scripts/run_pilot.py --execute
+
+      - name: Sauvegarder les videos HyperFrames finales
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperframes-final-videos
+          path: ${{ runner.temp }}/hyperframes-output/*.mp4
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Lancer le script de publication video
         if: always()
@@ -58,4 +65,5 @@ jobs:
           NOTION_DATABASE_ID:  ${{ secrets.NOTION_DATABASE_ID }}
           UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          HYPERFRAMES_OUTPUT_DIR: ${{ runner.temp }}/hyperframes-output
         run: python publish.py

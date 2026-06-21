@@ -3,6 +3,7 @@ import requests
 import re
 import anthropic
 from datetime import datetime
+from pathlib import Path
 import pytz
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"].strip()
@@ -70,6 +71,27 @@ SLOT_HOURS = {
 }
 
 SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW = {"kayla"}
+
+
+def repo_root():
+    return Path(__file__).resolve().parent
+
+
+def local_hyperframes_output_dir():
+    configured = os.getenv("HYPERFRAMES_OUTPUT_DIR", "hyperframes-output").strip() or "hyperframes-output"
+    output_dir = Path(configured)
+    if not output_dir.is_absolute():
+        output_dir = repo_root() / output_dir
+    return output_dir
+
+
+def local_hyperframes_video_path(row):
+    props = row.get("properties", {})
+    avatar = props["Avatar"]["select"]["name"].lower() if props.get("Avatar", {}).get("select") else ""
+    publication_date = props["Date Publication"]["date"]["start"] if props.get("Date Publication", {}).get("date") else ""
+    slot = props["Slot"]["select"]["name"].replace(":", "") if props.get("Slot", {}).get("select") else ""
+    page_id = row.get("id", "")[:8]
+    return local_hyperframes_output_dir() / f"hyperframes-{avatar}-{publication_date}-{slot}-{page_id}.mp4"
 
 
 def slot_is_due(slot_name):
@@ -359,6 +381,7 @@ def main():
 
     videos = get_videos_to_publish()
     print(f"{len(videos)} video(s) found.")
+    print(f"Local HyperFrames output dir: {local_hyperframes_output_dir()}")
 
     for index, video in enumerate(videos):
         props = video["properties"]
@@ -381,8 +404,15 @@ def main():
             print(f"  Slot {slot} not due yet - skipping.")
             continue
 
-        if not lien_video:
-            print("  No video link - skipping.")
+        local_video = local_hyperframes_video_path(video)
+        if local_video.exists():
+            video_source = "local"
+            print(f"  Video source: local MP4 ({local_video})")
+        elif lien_video:
+            video_source = "drive"
+            print("  Video source: Lien Video")
+        else:
+            print("  No local MP4 and no video link - skipping.")
             continue
 
         if not script:
@@ -392,8 +422,13 @@ def main():
         print("  Generating platform-specific content...")
         metadata = generate_metadata(script, avatar, plateformes, index)
 
-        print("  Downloading video...")
-        video_path = download_video(lien_video)
+        delete_video_after = False
+        if video_source == "local":
+            video_path = str(local_video)
+        else:
+            print("  Downloading video...")
+            video_path = download_video(lien_video)
+            delete_video_after = True
 
         successes = 0
         failures = 0
@@ -425,7 +460,8 @@ def main():
         else:
             print("  Not enough successful platforms - Notion NOT updated")
 
-        os.remove(video_path)
+        if delete_video_after:
+            os.remove(video_path)
 
     print("\nDone.")
 

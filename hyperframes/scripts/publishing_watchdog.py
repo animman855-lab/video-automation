@@ -27,6 +27,7 @@ SLOT_HOURS = {
 NORMAL_VIDEO_AVATARS = {"oliviaa", "oliviaaa", "cindy", "teacherryan", "thefluentbuild"}
 NORMAL_VIDEO_SLOTS = ["08:00", "16:00"]
 KAYLA_AD_SLOTS = ["08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00", "00:00", "02:00"]
+DIRECT_LOCAL_VIDEO_AVATARS = NORMAL_VIDEO_AVATARS | {"kayla"}
 
 
 def repo_root() -> Path:
@@ -200,20 +201,29 @@ def row_summary(row: dict, now: datetime) -> dict:
     script = prop_text(props, "Script")
     platforms = prop_multi_select(props, "Plateforme")
     due = slot_has_started(publication_date, slot, now)
+    uses_direct_local_video = avatar in DIRECT_LOCAL_VIDEO_AVATARS
 
     issues: list[str] = []
     notes: list[str] = []
 
     if status == "Publie":
-        if not lien_video and avatar != "kayla":
+        if not lien_video and not uses_direct_local_video:
             issues.append("Statut Publie mais Lien Video vide.")
+        elif not lien_video and uses_direct_local_video:
+            notes.append("Publie via MP4 local/artifact, sans Lien Video.")
         else:
             notes.append("Publie.")
     elif status == "A publier":
         if not lien_video and due:
-            issues.append("A publier mais Lien Video vide apres le debut du slot: publication impossible.")
+            if uses_direct_local_video:
+                issues.append("A publier apres le debut du slot: publication directe ou artifact a verifier.")
+            else:
+                issues.append("A publier mais Lien Video vide apres le debut du slot: publication impossible.")
         elif not lien_video:
-            notes.append("A publier avec Lien Video vide, mais slot pas encore arrive.")
+            if uses_direct_local_video:
+                notes.append("A publier pour publication directe quand le slot arrive.")
+            else:
+                notes.append("A publier avec Lien Video vide, mais slot pas encore arrive.")
         if not platforms:
             issues.append("A publier mais Plateforme vide: aucun réseau ne sera ciblé.")
         if due and lien_video and platforms:
@@ -223,14 +233,20 @@ def row_summary(row: dict, now: datetime) -> dict:
     elif status == "En cours":
         if video_type == "HyperFrames":
             if due and image_hyperframes and not lien_video:
-                issues.append("HyperFrames due mais Lien Video vide: generation probablement bloquee ou pas encore lancee.")
+                if uses_direct_local_video:
+                    issues.append("HyperFrames due mais encore En cours: generation locale probablement bloquee ou pas encore lancee.")
+                else:
+                    issues.append("HyperFrames due mais Lien Video vide: generation probablement bloquee ou pas encore lancee.")
             elif image_hyperframes and not lien_video:
-                notes.append("HyperFrames pret a generer quand le slot arrive.")
+                if uses_direct_local_video:
+                    notes.append("HyperFrames pret pour generation locale quand le slot arrive.")
+                else:
+                    notes.append("HyperFrames pret a generer quand le slot arrive.")
             elif not image_hyperframes:
                 issues.append("HyperFrames sans Image HyperFrames: generation impossible.")
         elif avatar == "kayla":
             if due and image_hyperframes and not lien_video:
-                issues.append("Kayla source video presente mais Lien Video vide: post-process Kayla a verifier.")
+                issues.append("Kayla source video presente mais encore En cours: post-process local Kayla a verifier.")
             elif not image_hyperframes:
                 notes.append("Kayla attend une video Flow dans Image HyperFrames.")
         else:
@@ -256,6 +272,8 @@ def row_summary(row: dict, now: datetime) -> dict:
         "platforms": platforms,
         "due": due,
         "has_video": bool(lien_video),
+        "uses_direct_local_video": uses_direct_local_video,
+        "published_via_local_artifact": status == "Publie" and uses_direct_local_video and not lien_video,
         "has_image_hyperframes": bool(image_hyperframes),
         "issues": issues,
         "notes": notes,
@@ -476,6 +494,8 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
             flags.append("due")
         if item["has_video"]:
             flags.append("video")
+        if item.get("published_via_local_artifact"):
+            flags.append("local/artifact")
         if item["has_image_hyperframes"]:
             flags.append("image/video source")
         flag_text = ", ".join(flags) if flags else "not due/no media"
@@ -493,6 +513,8 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
             flags.append("due")
         if item["has_video"]:
             flags.append("video")
+        if item.get("published_via_local_artifact"):
+            flags.append("local/artifact")
         if item["has_image_hyperframes"]:
             flags.append("source")
         flag_text = ", ".join(flags) if flags else "not due/no media"
