@@ -273,6 +273,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
         items=items,
         item_targets=item_targets,
         cta_audio_path=cta_audio_path,
+        cta_text=cta,
     )
     require_file_created(str(video_path), "TeacherRyan HyperFrames video")
     return video_path

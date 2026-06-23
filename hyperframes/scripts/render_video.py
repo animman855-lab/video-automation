@@ -151,16 +151,43 @@ def _draw_arrow(draw: ImageDraw.ImageDraw, target: tuple[int, int], pulse: float
     draw.polygon([end, left, right], fill=color)
 
 
-def _draw_cta(draw: ImageDraw.ImageDraw) -> None:
-    font = _font(50)
+def _wrap_text(text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    current: list[str] = []
+    measurer = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    for word in words:
+        candidate = " ".join([*current, word])
+        bbox = measurer.textbbox((0, 0), candidate, font=font)
+        if current and (bbox[2] - bbox[0]) > max_width:
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        lines.append(" ".join(current))
+    return lines or [text]
+
+
+def _draw_cta(draw: ImageDraw.ImageDraw, cta: str) -> None:
     box = (100, 1368, 980, 1586)
     draw.rounded_rectangle(box, radius=34, fill=(255, 255, 255), outline=(37, 176, 88), width=5)
-    lines = ["Follow TeacherRyan", "for more English vocabulary."]
-    y = 1414
+
+    font_size = 48
+    font = _font(font_size)
+    lines = _wrap_text(cta, font, 760)
+    while len(lines) > 3 and font_size > 34:
+        font_size -= 4
+        font = _font(font_size)
+        lines = _wrap_text(cta, font, 760)
+
+    line_height = font_size + 10
+    total_h = len(lines) * line_height
+    y = box[1] + ((box[3] - box[1] - total_h) // 2)
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y), line, fill=(10, 10, 10), font=font)
-        y += 60
+        y += line_height
 
 
 def _convert_to_wav(ffmpeg: str, source: Path, output_path: Path) -> Path:
@@ -281,6 +308,7 @@ def render_teacher_ryan_video(
     items: list[str],
     item_targets: dict[str, tuple[int, int]],
     cta_audio_path: Path | None = None,
+    cta_text: str = "Practice these words in real conversations with Saloo English.",
 ) -> Path:
     import imageio_ffmpeg
 
@@ -322,7 +350,7 @@ def render_teacher_ryan_video(
             _draw_arrow(draw, target, pulse)
             _draw_current_word(draw, animal, pulse)
         else:
-            _draw_cta(draw)
+            _draw_cta(draw, cta_text)
 
         frame.save(frames_dir / f"frame_{frame_index:04d}.jpg", "JPEG", quality=92)
 
