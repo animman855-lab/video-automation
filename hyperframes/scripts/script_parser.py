@@ -51,3 +51,17 @@ def parse_vocabulary_items(script: str) -> list[str]:
         raise ScriptParseError(f"Duplicate vocabulary items found: {items}")
 
     return items
+
+
+def parse_vocabulary_cta(script: str, fallback: str) -> str:
+    for raw_line in script.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^CTA:\s*(.+)$", line, flags=re.IGNORECASE)
+        if match:
+            cta = match.group(1).strip().strip('"')
+            if cta:
+                return cta
+
+    return fallback

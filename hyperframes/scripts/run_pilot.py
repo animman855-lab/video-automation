@@ -34,7 +34,7 @@ from safety import (
     require_non_empty,
     require_tts_budget,
 )
-from script_parser import parse_vocabulary_items
+from script_parser import parse_vocabulary_cta, parse_vocabulary_items
 from tts_google import (
     check_tts_secrets,
     synthesize_cindy_podcast_audios,
@@ -62,7 +62,7 @@ TEACHERRYAN_FIXED_TARGETS = [
     (300, 1340),
     (780, 1340),
 ]
-TEACHERRYAN_CTA = "Follow TeacherRyan for more English vocabulary."
+TEACHERRYAN_FALLBACK_CTA = "Practice these words in real conversations with Saloo English."
 TEACHERRYAN_MAX_OCR_FALLBACKS = 4
 
 
@@ -244,6 +244,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     require_non_empty(prompt_1, "Prompt 1")
 
     items = parse_vocabulary_items(script)
+    cta = parse_vocabulary_cta(script, TEACHERRYAN_FALLBACK_CTA)
     require_item_budget(items, limits)
     require_tts_budget(script, limits)
 
@@ -257,7 +258,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
 
     item_audio_paths, cta_audio_path = synthesize_teacher_ryan_audios(
         items,
-        TEACHERRYAN_CTA,
+        cta,
         work_dir / "item_audio",
     )
     for item in items:
