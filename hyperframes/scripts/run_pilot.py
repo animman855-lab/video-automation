@@ -46,7 +46,10 @@ from tts_google import (
 
 SLOT_HOURS = {
     "08:00": 8 * 60,
+    "10:00": 10 * 60,
+    "12:00": 12 * 60,
     "16:00": 16 * 60,
+    "20:00": 20 * 60,
     "00:00": 0,
 }
 SUPPORTED_AVATARS = {"teacherryan", "oliviaa", "thefluentbuild", "cindy"}
