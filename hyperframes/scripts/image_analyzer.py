@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 import re
 
@@ -149,9 +150,12 @@ def analyze_vocabulary_labels_ocr(image_path: Path, items: list[str]) -> OcrLabe
     )
 
 
-def _gray_line_score(pixel: tuple[int, int, int]) -> bool:
+def _grid_line_score(pixel: tuple[int, int, int]) -> bool:
     r, g, b = pixel
-    return 125 <= r <= 240 and 125 <= g <= 240 and 125 <= b <= 240 and max(pixel) - min(pixel) <= 32
+    spread = max(pixel) - min(pixel)
+    is_gray_line = 125 <= r <= 240 and 125 <= g <= 240 and 125 <= b <= 240 and spread <= 32
+    is_dark_line = r <= 90 and g <= 90 and b <= 90 and spread <= 55
+    return is_gray_line or is_dark_line
 
 
 def _group_peaks(indices: list[int], min_gap: int = 12) -> list[int]:
@@ -179,12 +183,12 @@ def _find_vertical_lines(image: Image.Image) -> list[int]:
         total = 0
         for y in range(y_start, y_end, 4):
             total += 1
-            if _gray_line_score(image.getpixel((x, y))):
+            if _grid_line_score(image.getpixel((x, y))):
                 hits += 1
         if total and hits / total > 0.38:
             scores.append(x)
 
-    return [x for x in _group_peaks(scores) if width * 0.04 < x < width * 0.96]
+    return [x for x in _group_peaks(scores) if width * 0.01 < x < width * 0.99]
 
 
 def _find_horizontal_lines(image: Image.Image) -> list[int]:
@@ -198,12 +202,12 @@ def _find_horizontal_lines(image: Image.Image) -> list[int]:
         total = 0
         for x in range(x_start, x_end, 4):
             total += 1
-            if _gray_line_score(image.getpixel((x, y))):
+            if _grid_line_score(image.getpixel((x, y))):
                 hits += 1
         if total and hits / total > 0.32:
             scores.append(y)
 
-    return [y for y in _group_peaks(scores) if height * 0.03 < y < height * 0.99]
+    return [y for y in _group_peaks(scores) if height * 0.01 < y < height * 0.99]
 
 
 def _valid_gaps(lines: list[int], min_gap: int) -> bool:
@@ -235,6 +239,30 @@ def _trim_to_plausible_grid(lines: list[int], min_gap: int, min_lines: int) -> l
     return best
 
 
+def _select_even_grid_lines(lines: list[int], exact_count: int, min_gap: int) -> list[int]:
+    if len(lines) < exact_count:
+        raise ImageAnalysisError(f"Not enough grid lines found. Required {exact_count}, found {lines}")
+
+    best = None
+    best_score = float("-inf")
+    for candidate_tuple in combinations(lines, exact_count):
+        candidate = list(candidate_tuple)
+        if not _valid_gaps(candidate, min_gap):
+            continue
+        gaps = [candidate[i + 1] - candidate[i] for i in range(len(candidate) - 1)]
+        average_gap = sum(gaps) / len(gaps)
+        regularity = -sum(abs(gap - average_gap) for gap in gaps)
+        span = candidate[-1] - candidate[0]
+        score = regularity * 4 + span * 0.12
+        if score > best_score:
+            best = candidate
+            best_score = score
+
+    if not best:
+        raise ImageAnalysisError(f"Could not select evenly spaced grid from lines: {lines}")
+    return best
+
+
 def analyze_vocabulary_grid(image_path: Path, items: list[str]) -> GridAnalysis:
     if not items:
         raise ImageAnalysisError("No vocabulary items were provided for image analysis.")
@@ -243,8 +271,14 @@ def analyze_vocabulary_grid(image_path: Path, items: list[str]) -> GridAnalysis:
     raw_vertical = _find_vertical_lines(image)
     raw_horizontal = _find_horizontal_lines(image)
 
-    vertical = _trim_to_plausible_grid(raw_vertical, min_gap=120, min_lines=2)
-    horizontal = _trim_to_plausible_grid(raw_horizontal, min_gap=120, min_lines=2)
+    if len(items) <= 10:
+        expected_cols = 2 if len(items) > 1 else 1
+        expected_rows = (len(items) + expected_cols - 1) // expected_cols
+        vertical = _select_even_grid_lines(raw_vertical, exact_count=expected_cols + 1, min_gap=120)
+        horizontal = _select_even_grid_lines(raw_horizontal, exact_count=expected_rows + 1, min_gap=120)
+    else:
+        vertical = _trim_to_plausible_grid(raw_vertical, min_gap=120, min_lines=2)
+        horizontal = _trim_to_plausible_grid(raw_horizontal, min_gap=120, min_lines=2)
 
     cols = len(vertical) - 1
     rows = len(horizontal) - 1

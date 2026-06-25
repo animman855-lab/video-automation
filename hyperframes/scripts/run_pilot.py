@@ -13,7 +13,7 @@ import pytz
 
 from dialogue_parser import parse_dialogue_script
 from drive_client import check_drive_secrets, upload_video_make_public
-from image_analyzer import ImageAnalysisError, analyze_vocabulary_labels_ocr
+from image_analyzer import ImageAnalysisError, analyze_vocabulary_grid, analyze_vocabulary_labels_ocr
 from notion_client import (
     load_local_env,
     prop_text,
@@ -66,7 +66,6 @@ TEACHERRYAN_FIXED_TARGETS = [
     (780, 1340),
 ]
 TEACHERRYAN_FALLBACK_CTA = "Practice these words in real conversations with Saloo English."
-TEACHERRYAN_MAX_OCR_FALLBACKS = 4
 
 
 def repo_root() -> Path:
@@ -200,25 +199,61 @@ def _teacher_ryan_fixed_targets(items: list[str]) -> dict[str, tuple[int, int]]:
 
 
 def _teacher_ryan_ocr_hybrid_targets(image_path: Path, items: list[str]) -> dict[str, tuple[int, int]]:
+    ocr_analysis = None
+    grid_analysis = None
+    ocr_error = None
+    grid_error = None
+
     try:
         ocr_analysis = analyze_vocabulary_labels_ocr(image_path, items)
     except ImageAnalysisError as exc:
-        raise SafetyError(f"TeacherRyan OCR arrow target detection failed: {exc}") from exc
+        ocr_error = exc
 
-    if not ocr_analysis.missing:
+    try:
+        grid_analysis = analyze_vocabulary_grid(image_path, items)
+    except ImageAnalysisError as exc:
+        grid_error = exc
+
+    if ocr_analysis is None and grid_analysis is None:
+        raise SafetyError(
+            "TeacherRyan arrow target detection failed: "
+            f"OCR error: {ocr_error}; grid error: {grid_error}"
+        )
+
+    if ocr_analysis is not None and not ocr_analysis.missing:
         print("TeacherRyan OCR arrow targets enabled. All labels detected.")
         for item in items:
             print(f"- OCR target {item}: {ocr_analysis.targets[item]}")
         return ocr_analysis.targets
 
-    if len(ocr_analysis.missing) > TEACHERRYAN_MAX_OCR_FALLBACKS:
-        detected = ", ".join(ocr_analysis.detected_words[:80])
-        raise SafetyError(
-            "TeacherRyan OCR arrow target detection failed: "
-            f"missing {len(ocr_analysis.missing)} labels "
-            f"({', '.join(ocr_analysis.missing)}). Detected words: {detected}"
-        )
+    if grid_analysis is not None:
+        item_targets = dict(grid_analysis.targets)
+        ocr_missing = items if ocr_analysis is None else ocr_analysis.missing
+        if ocr_analysis is not None:
+            for item, target in ocr_analysis.targets.items():
+                item_targets[item] = target
 
+        print(
+            "TeacherRyan OCR + detected-grid arrow targets enabled. "
+            f"OCR used for {0 if ocr_analysis is None else len(ocr_analysis.targets)} label(s); "
+            f"detected grid used for {len(ocr_missing)} label(s). "
+            f"Grid cells found: {grid_analysis.cells_found}."
+        )
+        if ocr_error is not None:
+            print(f"- OCR unavailable, grid fallback used for all labels: {ocr_error}")
+        if grid_error is not None:
+            print(f"- Grid detection warning: {grid_error}")
+        for item in items:
+            source = "detected grid" if item in ocr_missing else "OCR"
+            print(f"- {source} target {item}: {item_targets[item]}")
+        return item_targets
+
+    detected = ", ".join(ocr_analysis.detected_words[:80])
+    if ocr_analysis.targets:
+        print(
+            "TeacherRyan grid detection failed; using OCR targets plus fixed fallback "
+            f"for {len(ocr_analysis.missing)} missing label(s). Grid error: {grid_error}"
+        )
     fixed_targets = _teacher_ryan_fixed_targets(items)
     item_targets = dict(ocr_analysis.targets)
     for missing_item in ocr_analysis.missing:
@@ -227,7 +262,7 @@ def _teacher_ryan_ocr_hybrid_targets(image_path: Path, items: list[str]) -> dict
     print(
         "TeacherRyan OCR hybrid arrow targets enabled. "
         f"OCR missing {len(ocr_analysis.missing)} label(s); fixed grid fallback used for: "
-        f"{', '.join(ocr_analysis.missing)}"
+        f"{', '.join(ocr_analysis.missing)}. Detected words: {detected}"
     )
     for item in items:
         source = "fixed fallback" if item in ocr_analysis.missing else "OCR"
