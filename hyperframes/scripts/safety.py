@@ -11,7 +11,7 @@ class SafetyError(RuntimeError):
 @dataclass(frozen=True)
 class PilotLimits:
     max_rows: int = 1
-    max_tts_chars: int = 300
+    max_tts_chars: int = 350
     max_images: int = 0
     max_audio_files: int = int(os.getenv("HYPERFRAMES_MAX_ITEMS", "20"))
     max_videos: int = 1
