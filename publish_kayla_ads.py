@@ -376,14 +376,18 @@ def upload_video(video_path, title, description, platform):
                 ]
             )
 
-    with open(video_path, "rb") as video_file:
-        response = requests.post(
-            "https://api.upload-post.com/api/upload",
-            headers={"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"},
-            data=data_params,
-            files={"video": ("video.mp4", video_file, "video/mp4")},
-            timeout=180,
-        )
+    try:
+        with open(video_path, "rb") as video_file:
+            response = requests.post(
+                "https://api.upload-post.com/api/upload",
+                headers={"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"},
+                data=data_params,
+                files={"video": ("video.mp4", video_file, "video/mp4")},
+                timeout=180,
+            )
+    except requests.exceptions.RequestException as exc:
+        print(f"  UPLOAD ERROR {platform}: {exc}")
+        return False
 
     print(f"  UPLOAD STATUS {platform}: {response.status_code}")
     print(f"  UPLOAD RESPONSE {platform}: {response.text[:200]}")
