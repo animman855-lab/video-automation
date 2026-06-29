@@ -449,7 +449,21 @@ def main():
             print(f"  Title: {titre[:80]}")
             print(f"  Description: {description[:100]}...")
 
-            result = publish_video(video_path, titre, description, avatar, platform)
+            try:
+                result = publish_video(video_path, titre, description, avatar, platform)
+            except requests.RequestException as exc:
+                failures += 1
+                print(f"  Upload exception on {platform}: {type(exc).__name__}: {exc}")
+                continue
+            except Exception as exc:
+                failures += 1
+                print(f"  Unexpected upload exception on {platform}: {type(exc).__name__}: {exc}")
+                continue
+
+            if not isinstance(result, dict):
+                failures += 1
+                print(f"  Invalid upload response on {platform}: {result!r}")
+                continue
 
             if not (result.get("success") and result.get("status") != "failed"):
                 failures += 1
