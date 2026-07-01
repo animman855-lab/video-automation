@@ -15,7 +15,7 @@ class DialogueScript:
     speakers: list[str] = field(default_factory=list)
 
 
-def parse_dialogue_script(script: str) -> DialogueScript:
+def parse_dialogue_script(script: str, require_cta: bool = True) -> DialogueScript:
     lines: list[str] = []
     speakers: list[str] = []
     cta = ""
@@ -55,7 +55,7 @@ def parse_dialogue_script(script: str) -> DialogueScript:
         raise DialogueParseError(f"Expected at least 4 dialogue lines, found {len(lines)}.")
     if len(lines) > 12:
         raise DialogueParseError(f"Expected at most 12 dialogue lines, found {len(lines)}.")
-    if not cta:
+    if require_cta and not cta:
         raise DialogueParseError("CTA line is required for dialogue rendering.")
 
     return DialogueScript(lines=lines, cta=cta, speakers=speakers)

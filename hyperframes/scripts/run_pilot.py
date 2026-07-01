@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -66,6 +67,14 @@ TEACHERRYAN_FIXED_TARGETS = [
     (780, 1340),
 ]
 TEACHERRYAN_FALLBACK_CTA = "Practice these words in real conversations with Saloo English."
+THEFLUENTBUILD_CTA_VARIATIONS = [
+    "Find Saloo English in my profile.",
+    "Go to my profile to try Saloo English.",
+    "You can find Saloo English on my profile.",
+    "Open my profile and try Saloo English.",
+    "Saloo English is on my profile.",
+]
+THEFLUENTBUILD_FALLBACK_CTA = THEFLUENTBUILD_CTA_VARIATIONS[0]
 
 
 def repo_root() -> Path:
@@ -351,6 +360,41 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
     return video_path
 
 
+def _prepare_thefluentbuild_dialogue(script: str):
+    dialogue = parse_dialogue_script(script, require_cta=False)
+    if dialogue.cta:
+        print("TheFluentBuild CTA detected from explicit CTA line.")
+        return dialogue
+
+    for index in range(len(dialogue.lines) - 1, -1, -1):
+        line = dialogue.lines[index]
+        normalized_line = line.casefold()
+        for cta in THEFLUENTBUILD_CTA_VARIATIONS:
+            position = normalized_line.find(cta.casefold())
+            if position < 0:
+                continue
+
+            lines = list(dialogue.lines)
+            speakers = list(dialogue.speakers)
+            cleaned = f"{line[:position]} {line[position + len(cta):]}".strip()
+            cleaned = re.sub(r"\s+", " ", cleaned)
+            cleaned = re.sub(r"[\s,;:.-]+$", ".", cleaned).strip()
+
+            if cleaned and cleaned != ".":
+                lines[index] = cleaned
+            elif len(lines) > 4:
+                del lines[index]
+                del speakers[index]
+            else:
+                lines[index] = cta
+
+            print("TheFluentBuild CTA recovered from dialogue line.")
+            return replace(dialogue, lines=lines, speakers=speakers, cta=cta)
+
+    print(f"TheFluentBuild CTA fallback used: {THEFLUENTBUILD_FALLBACK_CTA}")
+    return replace(dialogue, cta=THEFLUENTBUILD_FALLBACK_CTA)
+
+
 def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     props = row.get("properties", {})
     script = prop_text(props, "Script")
@@ -361,7 +405,7 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     require_non_empty(script, "Script")
     require_non_empty(prompt_1, "Prompt 1")
 
-    dialogue = parse_dialogue_script(script)
+    dialogue = _prepare_thefluentbuild_dialogue(script)
     if "grandma" not in dialogue.speakers:
         dialogue = replace(
             dialogue,
