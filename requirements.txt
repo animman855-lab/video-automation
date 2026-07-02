@@ -6,3 +6,6 @@ google-auth==2.36.0
 imageio-ffmpeg==0.5.1
 pytesseract==0.3.13
 faster-whisper==1.1.1
+kokoro==0.9.4
+numpy>=1.26.0
+soundfile>=0.12.1

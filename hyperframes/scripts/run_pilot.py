@@ -44,6 +44,15 @@ from tts_google import (
     synthesize_thefluentbuild_audios,
 )
 
+try:
+    from tts_kokoro import KOKORO_TEACHERRYAN_VOICE, synthesize_teacher_ryan_audios_kokoro
+except Exception as exc:
+    KOKORO_TEACHERRYAN_VOICE = "am_echo"
+    synthesize_teacher_ryan_audios_kokoro = None
+    KOKORO_IMPORT_ERROR = exc
+else:
+    KOKORO_IMPORT_ERROR = None
+
 
 SLOT_HOURS = {
     "08:00": 8 * 60,
@@ -280,6 +289,32 @@ def _teacher_ryan_ocr_hybrid_targets(image_path: Path, items: list[str]) -> dict
     return item_targets
 
 
+def _synthesize_teacher_ryan_audios(
+    items: list[str],
+    cta: str,
+    output_dir: Path,
+) -> tuple[dict[str, Path], Path]:
+    kokoro_dir = output_dir / "kokoro"
+    if synthesize_teacher_ryan_audios_kokoro is not None:
+        try:
+            print(f"TeacherRyan TTS provider: Kokoro {KOKORO_TEACHERRYAN_VOICE}")
+            return synthesize_teacher_ryan_audios_kokoro(items, cta, kokoro_dir)
+        except Exception as exc:
+            print(
+                "WARNING: TeacherRyan Kokoro TTS failed "
+                f"({type(exc).__name__}: {exc}). Falling back to Google TTS."
+            )
+    else:
+        print(
+            "WARNING: TeacherRyan Kokoro TTS unavailable "
+            f"({type(KOKORO_IMPORT_ERROR).__name__}: {KOKORO_IMPORT_ERROR}). "
+            "Falling back to Google TTS."
+        )
+
+    print("TeacherRyan TTS provider: Google TTS fallback")
+    return synthesize_teacher_ryan_audios(items, cta, output_dir / "google")
+
+
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     limits = PilotLimits()
     props = row.get("properties", {})
@@ -304,7 +339,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     else:
         item_targets = _teacher_ryan_ocr_hybrid_targets(image_path, items)
 
-    item_audio_paths, cta_audio_path = synthesize_teacher_ryan_audios(
+    item_audio_paths, cta_audio_path = _synthesize_teacher_ryan_audios(
         items,
         cta,
         work_dir / "item_audio",
