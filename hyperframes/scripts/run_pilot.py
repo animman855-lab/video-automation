@@ -51,6 +51,7 @@ SLOT_HOURS = {
     "12:00": 12 * 60,
     "16:00": 16 * 60,
     "20:00": 20 * 60,
+    "22:00": 22 * 60,
     "00:00": 0,
 }
 SUPPORTED_AVATARS = {"teacherryan", "oliviaa", "thefluentbuild", "cindy"}
