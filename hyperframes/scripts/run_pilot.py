@@ -313,24 +313,7 @@ def _synthesize_teacher_ryan_audios(
     cta: str,
     output_dir: Path,
 ) -> tuple[dict[str, Path], Path]:
-    kokoro_dir = output_dir / "kokoro"
-    if synthesize_teacher_ryan_audios_kokoro is not None:
-        try:
-            print(f"TeacherRyan TTS provider: Kokoro {KOKORO_TEACHERRYAN_VOICE}")
-            return synthesize_teacher_ryan_audios_kokoro(items, cta, kokoro_dir)
-        except Exception as exc:
-            print(
-                "WARNING: TeacherRyan Kokoro TTS failed "
-                f"({type(exc).__name__}: {exc}). Falling back to Google TTS."
-            )
-    else:
-        print(
-            "WARNING: TeacherRyan Kokoro TTS unavailable "
-            f"({type(KOKORO_IMPORT_ERROR).__name__}: {KOKORO_IMPORT_ERROR}). "
-            "Falling back to Google TTS."
-        )
-
-    print("TeacherRyan TTS provider: Google TTS fallback")
+    print("TeacherRyan TTS provider: Google TTS")
     return synthesize_teacher_ryan_audios(items, cta, output_dir / "google")
 
 
