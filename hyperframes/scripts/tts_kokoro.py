@@ -7,7 +7,7 @@ import numpy as np
 import soundfile as sf
 
 
-KOKORO_TEACHERRYAN_VOICE = "am_echo"
+KOKORO_TEACHERRYAN_VOICE = "am_santa"
 KOKORO_SAMPLE_RATE = 24000
 
 
