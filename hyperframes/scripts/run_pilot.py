@@ -41,10 +41,7 @@ from tts_google import (
     check_tts_secrets,
     _smooth_spoken_text,
     _synthesize_text,
-    synthesize_cindy_podcast_audios,
-    synthesize_dialogue_audios,
     synthesize_teacher_ryan_audios,
-    synthesize_thefluentbuild_audios,
 )
 
 try:
@@ -476,6 +473,44 @@ def _synthesize_thefluentbuild_dialogue_audios(
     return line_paths, cta_path
 
 
+def _synthesize_cindy_podcast_audios(lines: list, output_dir: Path) -> list[Path]:
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty Cindy podcast.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    line_paths: list[Path] = []
+    pipeline = None
+    try:
+        pipeline = _kokoro_pipeline()
+    except Exception as exc:
+        print(f"WARNING: Cindy Kokoro pipeline unavailable ({type(exc).__name__}: {exc}). Google fallback will be used.")
+
+    for index, line in enumerate(lines, start=1):
+        speaker = getattr(line, "speaker", "")
+        text = getattr(line, "text", "")
+        if not text:
+            raise RuntimeError(f"Missing Cindy podcast text for line {index}.")
+
+        is_cindy = speaker == "cindy"
+        kokoro_voice = KOKORO_CINDY_VOICE if is_cindy else KOKORO_CINDY_GUEST_VOICE
+        google_voice = "en-US-Neural2-F" if is_cindy else "en-US-Neural2-D"
+        google_rate = 0.98 if is_cindy else 0.96
+        output_path = output_dir / f"line_{index:02d}"
+        line_paths.append(
+            _synthesize_line_with_kokoro_google_fallback(
+                text,
+                output_path,
+                kokoro_voice,
+                google_voice,
+                google_rate,
+                pipeline,
+                f"Cindy line {index}",
+            )
+        )
+
+    return line_paths
+
+
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     limits = PilotLimits()
     props = row.get("properties", {})
@@ -643,7 +678,7 @@ def _render_cindy(row: dict, work_dir: Path) -> Path:
 
     podcast = parse_podcast_script(script)
     image_path = download_image(image_url, work_dir / "source_image")
-    line_audio_paths = synthesize_cindy_podcast_audios(
+    line_audio_paths = _synthesize_cindy_podcast_audios(
         podcast.lines,
         work_dir / "cindy_audio",
     )
