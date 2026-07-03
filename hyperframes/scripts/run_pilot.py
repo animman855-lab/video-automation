@@ -422,6 +422,60 @@ def _synthesize_oliviaa_dialogue_audios(
     return line_paths, cta_path
 
 
+def _synthesize_thefluentbuild_dialogue_audios(
+    lines: list[str],
+    cta: str,
+    output_dir: Path,
+    speakers: list[str] | None = None,
+) -> tuple[list[Path], Path]:
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty TheFluentBuild dialogue.")
+    if not cta:
+        raise RuntimeError("Refusing to synthesize TheFluentBuild dialogue without CTA.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    speakers = speakers or []
+    line_paths: list[Path] = []
+    pipeline = None
+    try:
+        pipeline = _kokoro_pipeline()
+    except Exception as exc:
+        print(
+            "WARNING: TheFluentBuild Kokoro pipeline unavailable "
+            f"({type(exc).__name__}: {exc}). Google fallback will be used."
+        )
+
+    for index, line in enumerate(lines, start=1):
+        speaker = speakers[index - 1] if index - 1 < len(speakers) else ("grandma" if index % 2 == 0 else "learner")
+        is_grandma = speaker == "grandma"
+        kokoro_voice = KOKORO_THEFLUENTBUILD_GRANDMA_VOICE if is_grandma else KOKORO_THEFLUENTBUILD_LEARNER_VOICE
+        google_voice = "en-US-Neural2-F" if is_grandma else "en-US-Neural2-C"
+        google_rate = 0.9 if is_grandma else 0.94
+        output_path = output_dir / f"line_{index:02d}"
+        line_paths.append(
+            _synthesize_line_with_kokoro_google_fallback(
+                line,
+                output_path,
+                kokoro_voice,
+                google_voice,
+                google_rate,
+                pipeline,
+                f"TheFluentBuild line {index}",
+            )
+        )
+
+    cta_path = _synthesize_line_with_kokoro_google_fallback(
+        cta,
+        output_dir / "cta",
+        KOKORO_THEFLUENTBUILD_GRANDMA_VOICE,
+        "en-US-Neural2-F",
+        0.9,
+        pipeline,
+        "TheFluentBuild CTA",
+    )
+    return line_paths, cta_path
+
+
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     limits = PilotLimits()
     props = row.get("properties", {})
@@ -555,7 +609,7 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
             speakers=["learner" if index % 2 == 0 else "grandma" for index in range(len(dialogue.lines))],
         )
     image_path = download_image(image_url, work_dir / "source_image")
-    line_audio_paths, cta_audio_path = synthesize_thefluentbuild_audios(
+    line_audio_paths, cta_audio_path = _synthesize_thefluentbuild_dialogue_audios(
         dialogue.lines,
         dialogue.cta,
         work_dir / "thefluentbuild_audio",
