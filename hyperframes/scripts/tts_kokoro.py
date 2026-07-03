@@ -8,6 +8,12 @@ import soundfile as sf
 
 
 KOKORO_TEACHERRYAN_VOICE = "am_santa"
+KOKORO_OLIVIAA_VOICE = "bf_emma"
+KOKORO_OLIVIAA_MALE_VOICE = "am_echo"
+KOKORO_THEFLUENTBUILD_GRANDMA_VOICE = "af_aoede"
+KOKORO_THEFLUENTBUILD_LEARNER_VOICE = "am_echo"
+KOKORO_CINDY_VOICE = "af_jessica"
+KOKORO_CINDY_GUEST_VOICE = "am_puck"
 KOKORO_SAMPLE_RATE = 24000
 
 
@@ -61,3 +67,16 @@ def synthesize_teacher_ryan_audios_kokoro(
     cta_path = output_dir / "cta.wav"
     _synthesize_to_wav(pipeline, cta, cta_path)
     return audio_paths, cta_path
+
+
+def synthesize_text_kokoro(
+    text: str,
+    output_path: Path,
+    voice: str,
+    pipeline=None,
+) -> Path:
+    if pipeline is None:
+        from kokoro import KPipeline
+
+        pipeline = KPipeline(lang_code="a")
+    return _synthesize_to_wav(pipeline, text, output_path, voice=voice)

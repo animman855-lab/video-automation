@@ -37,7 +37,10 @@ from safety import (
 )
 from script_parser import parse_vocabulary_cta, parse_vocabulary_items
 from tts_google import (
+    _access_token,
     check_tts_secrets,
+    _smooth_spoken_text,
+    _synthesize_text,
     synthesize_cindy_podcast_audios,
     synthesize_dialogue_audios,
     synthesize_teacher_ryan_audios,
@@ -45,10 +48,29 @@ from tts_google import (
 )
 
 try:
-    from tts_kokoro import KOKORO_TEACHERRYAN_VOICE, synthesize_teacher_ryan_audios_kokoro
+    from kokoro import KPipeline
+    from tts_kokoro import (
+        KOKORO_CINDY_GUEST_VOICE,
+        KOKORO_CINDY_VOICE,
+        KOKORO_OLIVIAA_MALE_VOICE,
+        KOKORO_OLIVIAA_VOICE,
+        KOKORO_TEACHERRYAN_VOICE,
+        KOKORO_THEFLUENTBUILD_GRANDMA_VOICE,
+        KOKORO_THEFLUENTBUILD_LEARNER_VOICE,
+        synthesize_teacher_ryan_audios_kokoro,
+        synthesize_text_kokoro,
+    )
 except Exception as exc:
+    KPipeline = None
+    KOKORO_CINDY_GUEST_VOICE = "am_puck"
+    KOKORO_CINDY_VOICE = "af_jessica"
+    KOKORO_OLIVIAA_MALE_VOICE = "am_echo"
+    KOKORO_OLIVIAA_VOICE = "bf_emma"
     KOKORO_TEACHERRYAN_VOICE = "am_echo"
+    KOKORO_THEFLUENTBUILD_GRANDMA_VOICE = "af_aoede"
+    KOKORO_THEFLUENTBUILD_LEARNER_VOICE = "am_echo"
     synthesize_teacher_ryan_audios_kokoro = None
+    synthesize_text_kokoro = None
     KOKORO_IMPORT_ERROR = exc
 else:
     KOKORO_IMPORT_ERROR = None
@@ -315,6 +337,91 @@ def _synthesize_teacher_ryan_audios(
     return synthesize_teacher_ryan_audios(items, cta, output_dir / "google")
 
 
+def _kokoro_pipeline():
+    if KPipeline is None or synthesize_text_kokoro is None:
+        raise RuntimeError(f"Kokoro unavailable: {KOKORO_IMPORT_ERROR}")
+    return KPipeline(lang_code="a")
+
+
+def _synthesize_line_with_kokoro_google_fallback(
+    text: str,
+    output_path: Path,
+    kokoro_voice: str,
+    google_voice: str,
+    google_rate: float,
+    pipeline,
+    label: str,
+) -> Path:
+    spoken = _smooth_spoken_text(text)
+    try:
+        print(f"{label} TTS provider: Kokoro {kokoro_voice}")
+        return synthesize_text_kokoro(spoken, output_path.with_suffix(".wav"), kokoro_voice, pipeline=pipeline)
+    except Exception as exc:
+        print(
+            f"WARNING: {label} Kokoro TTS failed "
+            f"({type(exc).__name__}: {exc}). Falling back to Google TTS for this line."
+        )
+        token = _access_token()
+        return _synthesize_text(
+            spoken,
+            output_path.with_suffix(".mp3"),
+            token,
+            voice_name=google_voice,
+            speaking_rate=google_rate,
+        )
+
+
+def _synthesize_oliviaa_dialogue_audios(
+    lines: list[str],
+    cta: str,
+    output_dir: Path,
+    speakers: list[str] | None = None,
+) -> tuple[list[Path], Path]:
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty Oliviaa dialogue.")
+    if not cta:
+        raise RuntimeError("Refusing to synthesize Oliviaa dialogue without CTA.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    speakers = speakers or []
+    line_paths: list[Path] = []
+    pipeline = None
+    try:
+        pipeline = _kokoro_pipeline()
+    except Exception as exc:
+        print(f"WARNING: Oliviaa Kokoro pipeline unavailable ({type(exc).__name__}: {exc}). Google fallback will be used.")
+
+    for index, line in enumerate(lines, start=1):
+        speaker = speakers[index - 1] if index - 1 < len(speakers) else ("oliviaa" if index % 2 == 1 else "male")
+        is_oliviaa = speaker in {"olivia", "oliviaa", "oliviaaa"}
+        kokoro_voice = KOKORO_OLIVIAA_VOICE if is_oliviaa else KOKORO_OLIVIAA_MALE_VOICE
+        google_voice = "en-US-Neural2-F" if is_oliviaa else "en-US-Neural2-D"
+        google_rate = 0.94 if is_oliviaa else 0.92
+        output_path = output_dir / f"line_{index:02d}"
+        line_paths.append(
+            _synthesize_line_with_kokoro_google_fallback(
+                line,
+                output_path,
+                kokoro_voice,
+                google_voice,
+                google_rate,
+                pipeline,
+                f"Oliviaa line {index}",
+            )
+        )
+
+    cta_path = _synthesize_line_with_kokoro_google_fallback(
+        cta,
+        output_dir / "cta",
+        KOKORO_OLIVIAA_VOICE,
+        "en-US-Neural2-F",
+        0.9,
+        pipeline,
+        "Oliviaa CTA",
+    )
+    return line_paths, cta_path
+
+
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     limits = PilotLimits()
     props = row.get("properties", {})
@@ -374,7 +481,7 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
 
     dialogue = parse_dialogue_script(script)
     image_path = download_image(image_url, work_dir / "source_image")
-    line_audio_paths, cta_audio_path = synthesize_dialogue_audios(
+    line_audio_paths, cta_audio_path = _synthesize_oliviaa_dialogue_audios(
         dialogue.lines,
         dialogue.cta,
         work_dir / "dialogue_audio",
