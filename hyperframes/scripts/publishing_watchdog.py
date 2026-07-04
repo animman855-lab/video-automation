@@ -26,7 +26,7 @@ SLOT_HOURS = {
 }
 NORMAL_VIDEO_AVATARS = {"oliviaa", "oliviaaa", "cindy", "teacherryan", "thefluentbuild"}
 NORMAL_VIDEO_SLOTS = ["08:00", "16:00"]
-KAYLA_AD_SLOTS = ["08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00", "00:00", "02:00"]
+KAYLA_AD_SLOTS = ["00:00", "08:00", "12:00", "16:00", "20:00"]
 DIRECT_LOCAL_VIDEO_AVATARS = NORMAL_VIDEO_AVATARS | {"kayla"}
 
 
@@ -419,7 +419,7 @@ def render_report(rows: list[dict], image_rows: list[dict], now: datetime, targe
     lines.append(f"- Blocked / needs attention: {image_counts['blocked']}")
     lines.append("")
     lines.append("### Kayla Ads")
-    lines.append(f"- Expected schedule: up to 10 slots/day ({', '.join(KAYLA_AD_SLOTS)})")
+    lines.append(f"- Expected schedule: up to 5 slots/day ({', '.join(KAYLA_AD_SLOTS)})")
     lines.append(f"- Rows found today: {kayla_counts['total']}")
     lines.append(f"- Published: {kayla_counts['published']}")
     lines.append(f"- Ready: {kayla_counts['ready']}")
@@ -630,7 +630,7 @@ def render_telegram_message(rows: list[dict], image_rows: list[dict], now: datet
         f"Ready: {image_counts['ready']} | Waiting: {image_counts['waiting']} | Blocked: {image_counts['blocked']}",
         "",
         "KAYLA ADS",
-        "Expected: up to 10/day",
+        "Expected: up to 5/day",
         f"Published: {kayla_counts['published']}/{kayla_counts['total']}",
         f"Ready: {kayla_counts['ready']} | Waiting: {kayla_counts['waiting']} | Blocked: {kayla_counts['blocked']}",
         f"Next due: {next_due_slot(KAYLA_AD_SLOTS, now, target_date)}",
