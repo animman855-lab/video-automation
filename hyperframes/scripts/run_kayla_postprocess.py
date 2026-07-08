@@ -1265,11 +1265,6 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     normalized_source_plain = work_dir / "source_normalized_plain.mp4"
     normalized_source = work_dir / "source_normalized.mp4"
-    normalized_outro = work_dir / "outro_normalized.mp4"
-
-    if not OUTRO_ASSET.exists() or OUTRO_ASSET.stat().st_size < 1024:
-        raise RuntimeError(f"Missing Kayla outro asset: {OUTRO_ASSET}")
-
     source_has_audio = _video_has_audio(ffmpeg, source_video)
     if source_has_audio:
         normalize_cmd = [
@@ -1325,95 +1320,9 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
     add_auto_subtitles(ffmpeg, normalized_source_plain, normalized_source, work_dir)
 
     normalized_source_duration = _video_duration_seconds(ffmpeg, normalized_source)
-    print(f"Source video duration before outro: {normalized_source_duration:.2f}s")
-    print("Kayla cards disabled. Keeping Flow video clean, adding auto-subtitles, then outro.")
-    print("Appending Kayla outro asset.")
-
-    if _video_has_audio(ffmpeg, OUTRO_ASSET):
-        outro_cmd = [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(OUTRO_ASSET),
-            "-vf",
-            "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1",
-            "-r",
-            "30",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
-            "-shortest",
-            str(normalized_outro),
-        ]
-    else:
-        outro_cmd = [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(OUTRO_ASSET),
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc=channel_layout=stereo:sample_rate=44100",
-            "-vf",
-            "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1",
-            "-r",
-            "30",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
-            "-shortest",
-            str(normalized_outro),
-        ]
-    _run_ffmpeg(outro_cmd)
-
-    _run_ffmpeg(
-        [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(normalized_source),
-            "-i",
-            str(normalized_outro),
-            "-filter_complex",
-            "[0:v]setsar=1[v0];[1:v]setsar=1[v1];"
-            "[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];"
-            "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]",
-            "-map",
-            "[v]",
-            "-map",
-            "[a]",
-            "-r",
-            "30",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
-            "-movflags",
-            "+faststart",
-            str(output_video),
-        ]
-    )
+    print(f"Final Kayla video duration without outro: {normalized_source_duration:.2f}s")
+    print("Kayla cards disabled. Keeping Flow video clean, adding auto-subtitles, no outro.")
+    shutil.copyfile(normalized_source, output_video)
     if not output_video.exists() or output_video.stat().st_size < 1024:
         raise RuntimeError("Final Kayla video was not created correctly.")
     return output_video

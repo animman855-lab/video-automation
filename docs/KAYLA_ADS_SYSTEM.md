@@ -8,7 +8,7 @@ Yahya generates Flow videos manually, then the system post-processes them:
 
 - downloads the Flow MP4 from Notion `Image HyperFrames`
 - overlays smart cards/subtitle-style cards
-- appends the Saloo English outro
+- adds auto-subtitles without appending an outro
 - uploads final MP4 to Google Drive
 - fills Notion `Lien Video`
 - leaves `Statut = A publier`
@@ -106,11 +106,12 @@ Outro asset:
 
 Current rule:
 
-- always append the Kayla outro asset.
+- do not append the Kayla outro automatically.
 
 Reason:
 
-The earlier duration-based skip caused some videos to miss the outro.
+- Yahya now wants Kayla Flow videos to stay clean without the current outro.
+- The asset stays in the repo so an outro can be restored or replaced later.
 
 ## Safety
 
