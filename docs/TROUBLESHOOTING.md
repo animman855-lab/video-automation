@@ -67,17 +67,12 @@ Important:
 
 `publish_images.py` should run before HyperFrames in `publish.yml`.
 
-## Kayla Outro Missing
+## Kayla Outro
 
 Current rule:
 
-- Kayla post-processing always appends `hyperframes/assets/kayla/saloo-outro.mp4`.
-
-If outro is missing:
-
-- check that the latest commit is deployed
-- check that source row went through `run_kayla_postprocess.py`
-- check logs for `Appending Kayla outro asset.`
+- Kayla post-processing does not append an outro automatically.
+- No outro asset is stored in the repository.
 
 ## Kayla Cards Too Generic
 

@@ -463,13 +463,37 @@ def _append_cta_to_last_preferred_line(dialogue, preferred_speakers: set[str], f
     if not lines:
         return dialogue
 
-    if any(_text_has_app_cta(line) for line in lines):
+    preferred_speaker = (
+        "grandma"
+        if "grandma" in preferred_speakers
+        else "oliviaa"
+        if preferred_speakers & {"olivia", "oliviaa", "oliviaaa"}
+        else sorted(preferred_speakers)[0]
+    )
+    if len(speakers) < len(lines):
+        speakers.extend([""] * (len(lines) - len(speakers)))
+
+    target_index = len(lines) - 1
+    if speakers[target_index] not in preferred_speakers:
+        speakers[target_index] = preferred_speaker
+        print(
+            f"WARNING: {label} final speaker was missing or unexpected. "
+            f"Using the last line as {preferred_speaker}; rendering continues."
+        )
+
+    if _text_has_app_cta(lines[target_index]):
         if dialogue.cta:
             print(f"{label} CTA already integrated in dialogue. Separate CTA ignored.")
         return replace(dialogue, lines=lines, speakers=speakers, cta="")
 
+    if any(_text_has_app_cta(line) for line in lines):
+        print(
+            f"WARNING: {label} CTA text was found outside the final speaker line. "
+            "Keeping the existing CTA text without adding a second CTA."
+        )
+        return replace(dialogue, lines=lines, speakers=speakers, cta="")
+
     cta = dialogue.cta or fallback_cta
-    target_index = len(lines) - 1
 
     lines[target_index] = _append_sentence(lines[target_index], cta)
     print(f"{label} CTA integrated into dialogue line {target_index + 1}.")

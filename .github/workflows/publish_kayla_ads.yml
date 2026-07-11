@@ -51,7 +51,7 @@ jobs:
           name: kayla-final-video
           path: ${{ runner.temp }}/kayla-output/*.mp4
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
 
       - name: Publier une video Kayla Ads
         env:

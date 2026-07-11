@@ -43,7 +43,6 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-OUTRO_ASSET = repo_root() / "hyperframes" / "assets" / "kayla" / "saloo-outro.mp4"
 CANVAS_SIZE = (1080, 1920)
 MAX_CARDS = 3
 CARD_MAX_SECONDS = 12.4
@@ -1384,7 +1383,6 @@ def dry_run(target_date: str) -> int:
     print(f"Local output dir: {_local_output_dir()}")
     print(f"Drive upload enabled: {_drive_upload_enabled()}")
     print(f"Drive missing: {', '.join(check_drive_secrets()) or 'none'}")
-    print(f"Outro asset present: {OUTRO_ASSET.exists()}")
     if selected:
         _print_row(selected)
     else:

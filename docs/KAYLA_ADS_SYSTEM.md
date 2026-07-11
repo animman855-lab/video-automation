@@ -100,18 +100,10 @@ Rules:
 
 ## Outro
 
-Outro asset:
+Outro:
 
-- `hyperframes/assets/kayla/saloo-outro.mp4`
-
-Current rule:
-
-- do not append the Kayla outro automatically.
-
-Reason:
-
-- Yahya now wants Kayla Flow videos to stay clean without the current outro.
-- The asset stays in the repo so an outro can be restored or replaced later.
+- no outro asset is stored in the repository.
+- Kayla Flow videos stay clean without an automatically appended outro.
 
 ## Safety
 

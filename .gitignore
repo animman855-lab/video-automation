@@ -1,0 +1,10 @@
+.env
+*.env
+__pycache__/
+*.pyc
+*.mp4
+*.mp3
+*.wav
+hyperframes-output/
+kayla-output/
+output/
