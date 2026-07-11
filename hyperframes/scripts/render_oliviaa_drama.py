@@ -186,7 +186,7 @@ def _write_silence(writer: wave.Wave_write, seconds: float) -> None:
 def _build_synced_audio(
     ffmpeg: str,
     line_audio_paths: list[Path],
-    cta_audio_path: Path,
+    cta_audio_path: Path | None,
     dialogue: DialogueScript,
     output_audio_path: Path,
     audio_work_dir: Path,
@@ -195,7 +195,7 @@ def _build_synced_audio(
         raise ValueError(
             f"Dialogue has {len(dialogue.lines)} lines but {len(line_audio_paths)} audio files were provided."
         )
-    if not cta_audio_path.exists() or cta_audio_path.stat().st_size <= 0:
+    if cta_audio_path is not None and (not cta_audio_path.exists() or cta_audio_path.stat().st_size <= 0):
         raise ValueError("CTA audio is missing or empty.")
 
     audio_work_dir.mkdir(parents=True, exist_ok=True)
@@ -204,7 +204,9 @@ def _build_synced_audio(
         if not source.exists() or source.stat().st_size <= 0:
             raise ValueError(f"Dialogue audio is missing or empty for line {index}.")
         normalized_lines.append(_convert_to_wav(ffmpeg, source, audio_work_dir / f"line_{index:02d}.wav"))
-    normalized_cta = _convert_to_wav(ffmpeg, cta_audio_path, audio_work_dir / "cta.wav")
+    normalized_cta = None
+    if cta_audio_path is not None:
+        normalized_cta = _convert_to_wav(ffmpeg, cta_audio_path, audio_work_dir / "cta.wav")
 
     current = 0.0
     segments: list[DialogueSegment] = []
@@ -243,22 +245,24 @@ def _build_synced_audio(
                 )
                 current = end
 
-        cta_start = current
-        with wave.open(str(normalized_cta), "rb") as reader:
-            params = reader.getparams()
-            if expected_params is None:
-                writer.setparams(params)
-            elif params[:3] != expected_params[:3]:
-                raise ValueError("Inconsistent audio format for CTA.")
+        cta_start = float("inf")
+        if normalized_cta is not None:
+            cta_start = current
+            with wave.open(str(normalized_cta), "rb") as reader:
+                params = reader.getparams()
+                if expected_params is None:
+                    writer.setparams(params)
+                elif params[:3] != expected_params[:3]:
+                    raise ValueError("Inconsistent audio format for CTA.")
 
-            frames_count = reader.getnframes()
-            cta_duration = frames_count / reader.getframerate()
-            if cta_duration <= 0:
-                raise ValueError("CTA audio has invalid duration.")
+                frames_count = reader.getnframes()
+                cta_duration = frames_count / reader.getframerate()
+                if cta_duration <= 0:
+                    raise ValueError("CTA audio has invalid duration.")
 
-            writer.writeframes(reader.readframes(frames_count))
-            _write_silence(writer, CTA_HOLD_SECONDS)
-            current += cta_duration + CTA_HOLD_SECONDS
+                writer.writeframes(reader.readframes(frames_count))
+                _write_silence(writer, CTA_HOLD_SECONDS)
+                current += cta_duration + CTA_HOLD_SECONDS
 
     if not segments:
         raise ValueError("No dialogue segments were created.")
@@ -279,7 +283,7 @@ def render_oliviaa_drama_video(
     frames_dir: Path,
     dialogue: DialogueScript,
     line_audio_paths: list[Path],
-    cta_audio_path: Path,
+    cta_audio_path: Path | None,
 ) -> Path:
     import imageio_ffmpeg
 

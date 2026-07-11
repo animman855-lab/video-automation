@@ -98,6 +98,10 @@ TEACHERRYAN_FIXED_TARGETS = [
     (780, 1340),
 ]
 TEACHERRYAN_FALLBACK_CTA = "Practice these words in real conversations with Saloo English."
+OLIVIAA_FALLBACK_CTA = (
+    "By the way, there is an app called Saloo English. "
+    "It helps you practice real situations like this. Link in bio."
+)
 THEFLUENTBUILD_CTA_VARIATIONS = [
     "Find Saloo English in my profile.",
     "Go to my profile to try Saloo English.",
@@ -106,6 +110,7 @@ THEFLUENTBUILD_CTA_VARIATIONS = [
     "Saloo English is on my profile.",
 ]
 THEFLUENTBUILD_FALLBACK_CTA = THEFLUENTBUILD_CTA_VARIATIONS[0]
+CTA_DETECTION_PATTERN = re.compile(r"\b(saloo english|link in bio|profile|my bio)\b", re.IGNORECASE)
 
 
 def repo_root() -> Path:
@@ -358,11 +363,9 @@ def _synthesize_oliviaa_dialogue_audios(
     cta: str,
     output_dir: Path,
     speakers: list[str] | None = None,
-) -> tuple[list[Path], Path]:
+) -> tuple[list[Path], Path | None]:
     if not lines:
         raise RuntimeError("Refusing to synthesize an empty Oliviaa dialogue.")
-    if not cta:
-        raise RuntimeError("Refusing to synthesize Oliviaa dialogue without CTA.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     speakers = speakers or []
@@ -392,15 +395,17 @@ def _synthesize_oliviaa_dialogue_audios(
             )
         )
 
-    cta_path = _synthesize_line_with_kokoro_google_fallback(
-        cta,
-        output_dir / "cta",
-        KOKORO_OLIVIAA_VOICE,
-        "en-US-Neural2-F",
-        0.9,
-        pipeline,
-        "Oliviaa CTA",
-    )
+    cta_path = None
+    if cta:
+        cta_path = _synthesize_line_with_kokoro_google_fallback(
+            cta,
+            output_dir / "cta",
+            KOKORO_OLIVIAA_VOICE,
+            "en-US-Neural2-F",
+            0.9,
+            pipeline,
+            "Oliviaa CTA",
+        )
     return line_paths, cta_path
 
 
@@ -409,14 +414,66 @@ def _synthesize_thefluentbuild_dialogue_audios(
     cta: str,
     output_dir: Path,
     speakers: list[str] | None = None,
-) -> tuple[list[Path], Path]:
+) -> tuple[list[Path], Path | None]:
     print("TheFluentBuild TTS provider: Google TTS")
+    if not cta:
+        if not lines:
+            raise RuntimeError("Refusing to synthesize an empty TheFluentBuild dialogue.")
+        output_dir = output_dir / "google"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        token = _access_token()
+        line_paths: list[Path] = []
+        speakers = speakers or []
+        for index, line in enumerate(lines, start=1):
+            speaker = speakers[index - 1] if index - 1 < len(speakers) else ("grandma" if index % 2 == 0 else "learner")
+            is_grandma = speaker == "grandma"
+            voice = "en-US-Neural2-F" if is_grandma else "en-US-Neural2-C"
+            rate = 0.9 if is_grandma else 0.94
+            output_path = output_dir / f"line_{index:02d}.mp3"
+            line_paths.append(
+                _synthesize_text(_smooth_spoken_text(line), output_path, token, voice_name=voice, speaking_rate=rate)
+            )
+        return line_paths, None
     return synthesize_thefluentbuild_audios_google(lines, cta, output_dir / "google", speakers=speakers)
 
 
 def _synthesize_cindy_podcast_audios(lines: list, output_dir: Path) -> list[Path]:
     print("Cindy TTS provider: Google TTS")
     return synthesize_cindy_podcast_audios_google(lines, output_dir / "google")
+
+
+def _text_has_app_cta(text: str) -> bool:
+    return bool(CTA_DETECTION_PATTERN.search(text))
+
+
+def _append_sentence(text: str, addition: str) -> str:
+    text = text.strip()
+    addition = addition.strip()
+    if not addition:
+        return text
+    if not text:
+        return addition
+    separator = " " if text[-1] in ".!?" else ". "
+    return f"{text}{separator}{addition}"
+
+
+def _append_cta_to_last_preferred_line(dialogue, preferred_speakers: set[str], fallback_cta: str, label: str):
+    lines = list(dialogue.lines)
+    speakers = list(dialogue.speakers)
+    if not lines:
+        return dialogue
+
+    if any(_text_has_app_cta(line) for line in lines):
+        if dialogue.cta:
+            print(f"{label} CTA already integrated in dialogue. Separate CTA ignored.")
+        return replace(dialogue, lines=lines, speakers=speakers, cta="")
+
+    cta = dialogue.cta or fallback_cta
+    target_index = len(lines) - 1
+
+    lines[target_index] = _append_sentence(lines[target_index], cta)
+    print(f"{label} CTA integrated into dialogue line {target_index + 1}.")
+    return replace(dialogue, lines=lines, speakers=speakers, cta="")
 
 
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
@@ -476,7 +533,13 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
     require_non_empty(script, "Script")
     require_non_empty(prompt_1, "Prompt 1")
 
-    dialogue = parse_dialogue_script(script)
+    dialogue = parse_dialogue_script(script, require_cta=False)
+    dialogue = _append_cta_to_last_preferred_line(
+        dialogue,
+        {"olivia", "oliviaa", "oliviaaa"},
+        OLIVIAA_FALLBACK_CTA,
+        "Oliviaa",
+    )
     image_path = download_image(image_url, work_dir / "source_image")
     line_audio_paths, cta_audio_path = _synthesize_oliviaa_dialogue_audios(
         dialogue.lines,
@@ -486,7 +549,8 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for Oliviaa line {index}")
-    require_file_created(str(cta_audio_path), "TTS audio for Oliviaa CTA")
+    if cta_audio_path is not None:
+        require_file_created(str(cta_audio_path), "TTS audio for Oliviaa CTA")
 
     video_path = render_oliviaa_drama_video(
         image_path=image_path,
@@ -503,36 +567,19 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
 def _prepare_thefluentbuild_dialogue(script: str):
     dialogue = parse_dialogue_script(script, require_cta=False)
     if dialogue.cta:
-        print("TheFluentBuild CTA detected from explicit CTA line.")
-        return dialogue
+        return _append_cta_to_last_preferred_line(
+            dialogue,
+            {"grandma"},
+            THEFLUENTBUILD_FALLBACK_CTA,
+            "TheFluentBuild",
+        )
 
-    for index in range(len(dialogue.lines) - 1, -1, -1):
-        line = dialogue.lines[index]
-        normalized_line = line.casefold()
-        for cta in THEFLUENTBUILD_CTA_VARIATIONS:
-            position = normalized_line.find(cta.casefold())
-            if position < 0:
-                continue
-
-            lines = list(dialogue.lines)
-            speakers = list(dialogue.speakers)
-            cleaned = f"{line[:position]} {line[position + len(cta):]}".strip()
-            cleaned = re.sub(r"\s+", " ", cleaned)
-            cleaned = re.sub(r"[\s,;:.-]+$", ".", cleaned).strip()
-
-            if cleaned and cleaned != ".":
-                lines[index] = cleaned
-            elif len(lines) > 4:
-                del lines[index]
-                del speakers[index]
-            else:
-                lines[index] = cta
-
-            print("TheFluentBuild CTA recovered from dialogue line.")
-            return replace(dialogue, lines=lines, speakers=speakers, cta=cta)
-
-    print(f"TheFluentBuild CTA fallback used: {THEFLUENTBUILD_FALLBACK_CTA}")
-    return replace(dialogue, cta=THEFLUENTBUILD_FALLBACK_CTA)
+    return _append_cta_to_last_preferred_line(
+        dialogue,
+        {"grandma"},
+        THEFLUENTBUILD_FALLBACK_CTA,
+        "TheFluentBuild",
+    )
 
 
 def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
@@ -560,7 +607,8 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for TheFluentBuild line {index}")
-    require_file_created(str(cta_audio_path), "TTS audio for TheFluentBuild CTA")
+    if cta_audio_path is not None:
+        require_file_created(str(cta_audio_path), "TTS audio for TheFluentBuild CTA")
 
     video_path = render_thefluentbuild_grandma_video(
         image_path=image_path,
