@@ -36,7 +36,7 @@ SLOT_HOURS = {
     "20:00": 20 * 60,
     "22:00": 22 * 60,
 }
-SLOT_WINDOW_MINUTES = 90
+SLOT_WINDOW_MINUTES = 240
 
 
 def repo_root() -> Path:
@@ -72,7 +72,7 @@ def slot_is_due(slot_name: str, now: datetime | None = None) -> bool:
     if slot_minutes is None:
         return False
     if slot_minutes == 0:
-        return current_minutes <= 180
+        return current_minutes <= SLOT_WINDOW_MINUTES
     diff = current_minutes - slot_minutes
     return 0 <= diff <= SLOT_WINDOW_MINUTES
 
