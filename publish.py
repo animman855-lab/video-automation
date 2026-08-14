@@ -1,15 +1,24 @@
 import os
 import requests
 import re
-import anthropic
 from datetime import datetime
 from pathlib import Path
 import pytz
 
+from metadata_provider import deterministic_metadata, request_metadata
+
+from publish_timing import (
+    claim_slot,
+    queryable_dates,
+    read_slot_lock,
+    slot_is_due,
+    slot_key,
+    slot_sort_value,
+)
+
 NOTION_TOKEN = os.environ["NOTION_TOKEN"].strip()
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 UPLOAD_POST_API_KEY = os.environ["UPLOAD_POST_API_KEY"].strip()
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
 
 EBOOK_LINK = "https://mybook.to/100EnglishMistakes"
 PINTEREST_PROFILE = "thefluentbuild"
@@ -64,16 +73,6 @@ YOUTUBE_HASHTAGS = [
     "#englishspeaking",
 ]
 
-SLOT_HOURS = {
-    "08:00": 8 * 60,
-    "10:00": 10 * 60,
-    "12:00": 12 * 60,
-    "16:00": 16 * 60,
-    "20:00": 20 * 60,
-    "22:00": 22 * 60,
-    "00:00": 0,
-}
-
 SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW = {"kayla"}
 
 
@@ -98,28 +97,20 @@ def local_hyperframes_video_path(row):
     return local_hyperframes_output_dir() / f"hyperframes-{avatar}-{publication_date}-{slot}-{page_id}.mp4"
 
 
-def slot_is_due(slot_name):
-    tz = pytz.timezone("America/Toronto")
-    now = datetime.now(tz)
-    current_minutes = now.hour * 60 + now.minute
-    slot_minutes = SLOT_HOURS.get(slot_name)
-    if slot_minutes is None:
-        return False
-    diff = current_minutes - slot_minutes
-    if slot_minutes == 0:
-        diff = current_minutes if current_minutes < 180 else -1
-    return 0 <= diff <= 480
-
-
 def get_videos_to_publish():
     tz = pytz.timezone("America/Toronto")
-    today = datetime.now(tz).strftime("%Y-%m-%d")
+    now = datetime.now(tz)
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     payload = {
         "filter": {
             "and": [
                 {"property": "Statut", "select": {"equals": "A publier"}},
-                {"property": "Date Publication", "date": {"equals": today}},
+                {
+                    "or": [
+                        {"property": "Date Publication", "date": {"equals": value}}
+                        for value in queryable_dates(now)
+                    ]
+                },
             ]
         }
     }
@@ -129,13 +120,43 @@ def get_videos_to_publish():
     return response.json().get("results", [])
 
 
+def select_due_slot_group(videos, now):
+    candidates = []
+    for video in videos:
+        props = video["properties"]
+        avatar = props["Avatar"]["select"]["name"].lower() if props["Avatar"]["select"] else ""
+        if avatar in SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW:
+            continue
+        publication_date = props["Date Publication"]["date"]["start"] if props["Date Publication"]["date"] else ""
+        slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
+        script = props["Script"]["rich_text"]
+        lien_video = props["Lien Video"]["url"] if props["Lien Video"]["url"] else ""
+        local_video = local_hyperframes_video_path(video)
+        if not slot_is_due(slot, publication_date, now):
+            continue
+        if not script or not (local_video.exists() or lien_video):
+            continue
+        candidates.append((slot_sort_value(publication_date, slot), slot_key(publication_date, slot)))
+
+    if not candidates:
+        return [], None
+
+    selected_key = min(candidates, key=lambda item: item[0])[1]
+    selected = []
+    for video in videos:
+        props = video["properties"]
+        publication_date = props["Date Publication"]["date"]["start"] if props["Date Publication"]["date"] else ""
+        slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
+        if slot_key(publication_date, slot) == selected_key:
+            selected.append(video)
+    return selected, selected_key
+
+
 def get_youtube_hashtag(index):
     return YOUTUBE_HASHTAGS[index % len(YOUTUBE_HASHTAGS)]
 
 
 def generate_metadata(script, avatar, plateformes, video_index=0):
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
     avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), f"#{avatar.lower()}")
     youtube_hashtag = get_youtube_hashtag(video_index)
     context = AVATAR_CONTEXT.get(avatar.lower(), "an English teacher")
@@ -233,42 +254,32 @@ PINTEREST_DESCRIPTION: [description here]
 SCRIPT:
 {script}"""
 
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2500,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    text = message.content[0].text
-    result = {}
-    current_key = None
-    current_lines = []
-
-    keys = [
-        "YOUTUBE_TITLE", "YOUTUBE_DESCRIPTION",
-        "TIKTOK_TITLE", "TIKTOK_DESCRIPTION",
-        "INSTAGRAM_TITLE", "INSTAGRAM_DESCRIPTION",
-        "FACEBOOK_TITLE", "FACEBOOK_DESCRIPTION",
-        "PINTEREST_TITLE", "PINTEREST_DESCRIPTION",
+    required_keys = [
+        f"{platform.upper()}_{suffix}"
+        for platform in plateformes
+        for suffix in ("TITLE", "DESCRIPTION")
     ]
-
-    for line in text.splitlines():
-        matched = False
-        for key in keys:
-            if line.startswith(f"{key}:"):
-                if current_key:
-                    result[current_key] = "\n".join(current_lines).strip()
-                current_key = key
-                current_lines = [line[len(f"{key}:"):].strip()]
-                matched = True
-                break
-        if not matched and current_key:
-            current_lines.append(line)
-
-    if current_key:
-        result[current_key] = "\n".join(current_lines).strip()
-
-    return result
+    fallback_hashtags = [
+        "#learnenglish",
+        "#englishvocabulary",
+        "#englishspeakingpractice",
+        "#english",
+        avatar_hashtag,
+        "#englishlesson",
+        "#esl",
+    ]
+    return request_metadata(
+        prompt,
+        required_keys,
+        lambda: deterministic_metadata(
+            script,
+            avatar,
+            plateformes,
+            fallback_hashtags,
+            youtube_hashtags=[youtube_hashtag],
+        ),
+        label="main publisher",
+    )
 
 
 def get_drive_file_id(drive_url):
@@ -350,6 +361,13 @@ def publish_video(video_path, titre, description, avatar, platform):
             ("description", description),
             ("platform[]", platform_key),
         ]
+        if platform_key == "youtube":
+            data_params.extend(
+                [
+                    ("selfDeclaredMadeForKids", "false"),
+                    ("privacyStatus", "public"),
+                ]
+            )
 
     with open(video_path, "rb") as video_file:
         response = requests.post(
@@ -387,6 +405,18 @@ def main():
     print(f"{len(videos)} video(s) found.")
     print(f"Local HyperFrames output dir: {local_hyperframes_output_dir()}")
 
+    videos, selected_key = select_due_slot_group(videos, now)
+    if not videos:
+        print("No ready due video slot found. Nothing to do.")
+        return
+
+    existing_lock = read_slot_lock()
+    if existing_lock and existing_lock != selected_key:
+        print(f"Another slot is already active in this run ({existing_lock}); keeping videos unchanged.")
+        return
+    slot_claimed = existing_lock == selected_key
+    print(f"Selected publication slot: {selected_key}")
+
     for index, video in enumerate(videos):
         props = video["properties"]
         page_id = video["id"]
@@ -397,6 +427,7 @@ def main():
         lien_video = props["Lien Video"]["url"] if props["Lien Video"]["url"] else ""
         plateformes = [p["name"] for p in props["Plateforme"]["multi_select"]]
         slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
+        publication_date = props["Date Publication"]["date"]["start"] if props["Date Publication"]["date"] else ""
 
         print(f"\n--- {titre_notion} | {avatar} | Slot: {slot} | Platforms: {plateformes} ---")
 
@@ -404,7 +435,7 @@ def main():
             print(f"  Avatar {avatar} is handled by a dedicated workflow - skipping.")
             continue
 
-        if not slot_is_due(slot):
+        if not slot_is_due(slot, publication_date, now):
             print(f"  Slot {slot} not due yet - skipping.")
             continue
 
@@ -474,6 +505,9 @@ def main():
 
         print(f"  Publish result: successes={successes} failures={failures}")
         if successes >= MIN_SUCCESSFUL_PLATFORMS:
+            if not slot_claimed:
+                claim_slot(selected_key)
+                slot_claimed = True
             mark_as_published(page_id)
         else:
             print("  Not enough successful platforms - Notion NOT updated")

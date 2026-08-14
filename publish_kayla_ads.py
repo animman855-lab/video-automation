@@ -4,22 +4,21 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
 import pytz
 import requests
+from metadata_provider import deterministic_metadata, request_metadata
+from publish_timing import queryable_dates, slot_is_due, slot_sort_value
 
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"].strip()
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 UPLOAD_POST_API_KEY = os.environ["UPLOAD_POST_API_KEY"].strip()
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
 
 EBOOK_LINK = "https://mybook.to/100EnglishMistakes"
 PINTEREST_PROFILE = "thefluentbuild"
 KAYLA_PROFILE = "kayla"
 KAYLA_PINTEREST_BOARD_ID = "1108800439448657323"
 MIN_SUCCESSFUL_PLATFORMS = 2
-SLOT_WINDOW_MINUTES = 240
 REQUIRED_HASHTAGS = [
     "#learnenglish",
     "#englishapp",
@@ -30,19 +29,6 @@ REQUIRED_HASHTAGS = [
 YOUTUBE_TITLE_HASHTAGS = ["#english", "#learnenglish", "#englishlearning"]
 YOUTUBE_TITLE_MAX_LENGTH = 100
 
-SLOT_HOURS = {
-    "00:00": 0,
-    "02:00": 2 * 60,
-    "08:00": 8 * 60,
-    "10:00": 10 * 60,
-    "12:00": 12 * 60,
-    "14:00": 14 * 60,
-    "16:00": 16 * 60,
-    "18:00": 18 * 60,
-    "20:00": 20 * 60,
-    "22:00": 22 * 60,
-}
-
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Content-Type": "application/json",
@@ -52,16 +38,6 @@ NOTION_HEADERS = {
 
 def toronto_now():
     return datetime.now(pytz.timezone("America/Toronto"))
-
-
-def slot_is_due(slot_name, now=None):
-    current = now or toronto_now()
-    current_minutes = current.hour * 60 + current.minute
-    slot_minutes = SLOT_HOURS.get(slot_name)
-    if slot_minutes is None:
-        return False
-    diff = current_minutes - slot_minutes
-    return 0 <= diff <= SLOT_WINDOW_MINUTES
 
 
 def get_text(prop):
@@ -87,14 +63,20 @@ def get_multi_select(prop):
     return [item.get("name", "") for item in prop.get("multi_select", []) if item.get("name")]
 
 
-def query_kayla_ads(target_date):
+def query_kayla_ads(target_dates):
+    dates = [target_dates] if isinstance(target_dates, str) else list(target_dates)
     payload = {
         "filter": {
             "and": [
                 {"property": "Avatar", "select": {"equals": "kayla"}},
                 {"property": "Video Type", "select": {"equals": "Visual Vocabulary"}},
                 {"property": "Statut", "select": {"equals": "A publier"}},
-                {"property": "Date Publication", "date": {"equals": target_date}},
+                {
+                    "or": [
+                        {"property": "Date Publication", "date": {"equals": value}}
+                        for value in dates
+                    ]
+                },
             ]
         },
         "sorts": [
@@ -135,7 +117,6 @@ def local_kayla_video_path(row: dict) -> Path:
 
 
 def generate_kayla_ad_metadata(script, platforms):
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     platforms_str = ", ".join(platforms)
     prompt = f"""You are a performance social media copywriter for Saloo English, an English learning app.
 
@@ -172,44 +153,24 @@ PINTEREST_DESCRIPTION: [description]
 Video script/context:
 {script}"""
 
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1800,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = message.content[0].text
-    result = {}
-    current_key = None
-    current_lines = []
-    keys = [
-        "YOUTUBE_TITLE",
-        "YOUTUBE_DESCRIPTION",
-        "TIKTOK_TITLE",
-        "TIKTOK_DESCRIPTION",
-        "INSTAGRAM_TITLE",
-        "INSTAGRAM_DESCRIPTION",
-        "FACEBOOK_TITLE",
-        "FACEBOOK_DESCRIPTION",
-        "PINTEREST_TITLE",
-        "PINTEREST_DESCRIPTION",
+    required_keys = [
+        f"{platform.upper()}_{suffix}"
+        for platform in platforms
+        for suffix in ("TITLE", "DESCRIPTION")
     ]
-
-    for line in text.splitlines():
-        matched = False
-        for key in keys:
-            if line.startswith(f"{key}:"):
-                if current_key:
-                    result[current_key] = "\n".join(current_lines).strip()
-                current_key = key
-                current_lines = [line[len(f"{key}:"):].strip()]
-                matched = True
-                break
-        if not matched and current_key:
-            current_lines.append(line)
-
-    if current_key:
-        result[current_key] = "\n".join(current_lines).strip()
-    return result
+    return request_metadata(
+        prompt,
+        required_keys,
+        lambda: deterministic_metadata(
+            script,
+            "kayla",
+            platforms,
+            REQUIRED_HASHTAGS,
+            youtube_hashtags=YOUTUBE_TITLE_HASHTAGS,
+            app_focused=True,
+        ),
+        label="Kayla Ads",
+    )
 
 
 def missing_required_hashtags(text: str) -> list[str]:
@@ -354,7 +315,14 @@ def upload_video(video_path, title, description, platform):
             ("description", description),
             ("platform[]", key),
         ]
-        if key == "facebook":
+        if key == "youtube":
+            data_params.extend(
+                [
+                    ("selfDeclaredMadeForKids", "false"),
+                    ("privacyStatus", "public"),
+                ]
+            )
+        elif key == "facebook":
             data_params.extend(
                 [
                     ("facebook_title", title),
@@ -424,21 +392,21 @@ def main():
     args = parser.parse_args()
 
     now = toronto_now()
-    today = args.date or now.strftime("%Y-%m-%d")
+    target_dates = [args.date] if args.date else queryable_dates(now)
     print(f"Current time (Montreal): {now.strftime('%Y-%m-%d %H:%M')}")
-    print(f"Kayla Ads target date: {today}")
+    print(f"Kayla Ads target dates: {', '.join(target_dates)}")
 
-    rows = query_kayla_ads(today)
+    rows = query_kayla_ads(target_dates)
     print(f"Ready Kayla ad row(s): {len(rows)}")
     print(f"Local Kayla output dir: {local_output_dir()}")
 
-    selected = None
-    selected_local_video = None
+    candidates = []
     for row in rows:
         props = row.get("properties", {})
         slot = get_text(props.get("Slot"))
+        publication_date = get_text(props.get("Date Publication"))
         title = get_text(props.get("Titre")) or "Untitled Kayla Ad"
-        if not slot_is_due(slot, now):
+        if not slot_is_due(slot, publication_date, now):
             print(f"Skipping {title}: slot {slot} not due.")
             continue
         local_video = local_kayla_video_path(row)
@@ -446,9 +414,13 @@ def main():
         if not local_video.exists() and not video_url:
             print(f"Skipping {title}: no local MP4 and no Lien Video.")
             continue
-        selected = row
+        candidates.append((slot_sort_value(publication_date, slot), row, local_video))
+
+    selected = None
+    selected_local_video = None
+    if candidates:
+        _, selected, local_video = min(candidates, key=lambda item: item[0])
         selected_local_video = local_video if local_video.exists() else None
-        break
 
     if not selected:
         print("No due Kayla ad row with an available video found. Nothing to publish.")

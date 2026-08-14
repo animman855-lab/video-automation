@@ -38,7 +38,7 @@ jobs:
         env:
           NOTION_TOKEN:                 ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID:           ${{ secrets.NOTION_DATABASE_ID }}
-          KAYLA_AUTO_SUBTITLES:         "1"
+          KAYLA_AUTO_SUBTITLES:         "0"
           KAYLA_WHISPER_MODEL:          "base"
           KAYLA_OUTPUT_DIR:             "${{ runner.temp }}/kayla-output"
           KAYLA_UPLOAD_DRIVE:           "0"
@@ -58,6 +58,7 @@ jobs:
           NOTION_TOKEN:        ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID:  ${{ secrets.NOTION_DATABASE_ID }}
           UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
-          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
           KAYLA_OUTPUT_DIR:    "${{ runner.temp }}/kayla-output"
         run: python publish_kayla_ads.py

@@ -33,6 +33,7 @@ jobs:
           NOTION_TOKEN:             ${{ secrets.NOTION_TOKEN }}
           NOTION_IMAGE_DATABASE_ID: ${{ secrets.NOTION_IMAGE_DATABASE_ID }}
           UPLOAD_POST_API_KEY:      ${{ secrets.UPLOAD_POST_API_KEY }}
+          PUBLISH_SLOT_LOCK_FILE:   ${{ runner.temp }}/publish-slot-lock.json
         run: python publish_images.py
 
       - name: Installer Tesseract OCR et espeak-ng
@@ -64,6 +65,8 @@ jobs:
           NOTION_TOKEN:        ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID:  ${{ secrets.NOTION_DATABASE_ID }}
           UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
-          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
           HYPERFRAMES_OUTPUT_DIR: ${{ runner.temp }}/hyperframes-output
+          PUBLISH_SLOT_LOCK_FILE: ${{ runner.temp }}/publish-slot-lock.json
         run: python publish.py
