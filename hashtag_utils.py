@@ -12,6 +12,12 @@ CORE_HASHTAGS = [
     "#english",
 ]
 YOUTUBE_TITLE_HASHTAGS = ["#english", "#learnenglish", "#englishlearning"]
+TIKTOK_HASHTAGS_BY_AVATAR = {
+    "oliviaa": ["#learnenglish", "#reallifeenglish", "#englishspeaking"],
+    "cindy": ["#learnenglish", "#englishlistening", "#englishspeaking"],
+    "teacherryan": ["#learnenglish", "#englishvocabulary", "#englishpractice"],
+    "thefluentbuild": ["#learnenglish", "#englishgrammar", "#reallifeenglish"],
+}
 
 
 def _avatar_hashtag(avatar: str) -> str:
@@ -37,10 +43,22 @@ def _extract_tags(text: str) -> list[str]:
     return _unique_tags(re.findall(r"(?<![\w])#[\w]+", text or ""))
 
 
+def tiktok_hashtags(avatar: str) -> list[str]:
+    """Return three short topic tags plus one avatar tag for TikTok."""
+
+    key = re.sub(r"[^a-z0-9]+", "", (avatar or "").lower())
+    topic_tags = TIKTOK_HASHTAGS_BY_AVATAR.get(
+        key,
+        ["#learnenglish", "#englishpractice", "#englishspeaking"],
+    )
+    return _unique_tags(topic_tags + [_avatar_hashtag(avatar)])
+
+
 def ensure_description_hashtags(
     description: str,
     avatar: str,
     max_chars: int | None = None,
+    required_tags: list[str] | None = None,
 ) -> str:
     """Guarantee core/avatar tags while preserving a few relevant AI tags."""
 
@@ -48,7 +66,7 @@ def ensure_description_hashtags(
     existing = _extract_tags(clean)
     body = re.sub(r"(?<![\w])#[\w]+", "", clean)
     body = re.sub(r"\s+", " ", body).strip()
-    required = _unique_tags(CORE_HASHTAGS + [_avatar_hashtag(avatar)])
+    required = _unique_tags(required_tags or (CORE_HASHTAGS + [_avatar_hashtag(avatar)]))
     tags = _unique_tags(required + existing)
     if max_chars is not None:
         extras = [tag for tag in tags if tag.lower() not in {item.lower() for item in required}]
@@ -93,7 +111,7 @@ def title_with_hashtags(title: str, tags: list[str], max_chars: int) -> str:
 
 
 def tiktok_title_with_hashtags(title: str, avatar: str, max_chars: int = 150) -> str:
-    return title_with_hashtags(title, CORE_HASHTAGS[:3] + [_avatar_hashtag(avatar)], max_chars)
+    return title_with_hashtags(title, tiktok_hashtags(avatar), max_chars)
 
 
 def prepare_video_metadata(
@@ -105,9 +123,14 @@ def prepare_video_metadata(
     """Return the exact title/description to send to Upload-Post."""
 
     key = (platform or "").lower()
-    avatar_tag = _avatar_hashtag(avatar)
     if key == "tiktok":
-        return tiktok_title_with_hashtags(title, avatar, 150), ""
+        tags = tiktok_hashtags(avatar)
+        return tiktok_title_with_hashtags(title, avatar, 150), ensure_description_hashtags(
+            description,
+            avatar,
+            500,
+            required_tags=tags,
+        )
     if key == "youtube":
         return title_with_hashtags(title, YOUTUBE_TITLE_HASHTAGS, 100), ensure_description_hashtags(
             description, avatar, 5000
@@ -135,13 +158,19 @@ def validate_prepared_metadata(
 
     key = (platform or "").lower()
     if key == "tiktok":
-        required = CORE_HASHTAGS[:3] + [_avatar_hashtag(avatar)]
+        required = tiktok_hashtags(avatar)
         haystack = title.lower()
         missing = [tag for tag in required if tag.lower() not in haystack]
         if missing:
             raise ValueError(f"TikTok title is missing hashtags: {' '.join(missing)}")
-        if (description or "").strip():
-            raise ValueError("TikTok description must be empty")
+        if len(title) > 150:
+            raise ValueError("TikTok title exceeds 150 characters")
+        description_lower = (description or "").lower()
+        missing = [tag for tag in required if tag.lower() not in description_lower]
+        if missing:
+            raise ValueError(f"TikTok description is missing hashtags: {' '.join(missing)}")
+        if len(description) > 500:
+            raise ValueError("TikTok description exceeds 500 characters")
         return
 
     if key == "youtube":

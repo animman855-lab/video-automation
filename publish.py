@@ -195,11 +195,13 @@ DESCRIPTION rules:
 === TIKTOK ===
 TITLE rules:
 - ONE line in CAPS, punchy hook
-- After the hook add: #learnenglish #englishvocabulary #englishspeakingpractice #english {avatar_hashtag}
+- Do not add hashtags yourself; the publisher will append three short topic hashtags and one avatar hashtag.
 - Max 150 characters total
 
 DESCRIPTION rules:
-- Leave completely empty.
+- Write one or two short sentences describing the video.
+- Do not add hashtags yourself; the publisher will append the required TikTok hashtags.
+- Keep the description concise and natural.
 
 === INSTAGRAM ===
 TITLE rules:

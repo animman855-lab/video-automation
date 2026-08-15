@@ -80,9 +80,6 @@ def parse_metadata_response(text: str, keys: Iterable[str] = METADATA_KEYS) -> d
 
 def _has_required_values(result: dict[str, str], required_keys: Iterable[str]) -> bool:
     for key in required_keys:
-        # TikTok receives its hashtags in the title and intentionally has no description.
-        if key == "TIKTOK_DESCRIPTION":
-            continue
         if not isinstance(result.get(key), str) or not result.get(key, "").strip():
             return False
     return True
@@ -94,7 +91,7 @@ def validate_metadata_contract(result: dict[str, str], required_keys: Iterable[s
     if not isinstance(result, dict):
         raise ValueError("metadata response is not an object")
     required = list(required_keys)
-    missing = [key for key in required if key != "TIKTOK_DESCRIPTION" and not result.get(key, "").strip()]
+    missing = [key for key in required if not result.get(key, "").strip()]
     if missing:
         raise ValueError(f"metadata response is missing: {', '.join(missing)}")
 
