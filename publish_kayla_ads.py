@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytz
 import requests
+from hashtag_utils import title_with_hashtags
 from metadata_provider import deterministic_metadata, request_metadata
 from publish_timing import queryable_dates, slot_is_due, slot_sort_value
 
@@ -27,6 +28,7 @@ REQUIRED_HASHTAGS = [
     "#salooenglish",
 ]
 YOUTUBE_TITLE_HASHTAGS = ["#english", "#learnenglish", "#englishlearning"]
+KAYLA_TIKTOK_TITLE_HASHTAGS = ["#learnenglish", "#englishapp", "#salooenglish", "#kayla"]
 YOUTUBE_TITLE_MAX_LENGTH = 100
 
 NOTION_HEADERS = {
@@ -205,13 +207,7 @@ def ensure_required_hashtags(description: str, max_chars: int | None = None) -> 
 
 
 def title_with_required_hashtags(title: str, max_chars: int = 150) -> str:
-    clean_title = " ".join((title or "").split()).strip()
-    missing = missing_required_hashtags(clean_title)
-    if missing:
-        clean_title = f"{clean_title} {' '.join(missing)}".strip()
-    if len(clean_title) <= max_chars:
-        return clean_title
-    return clean_title[: max_chars - 3].rstrip() + "..."
+    return title_with_hashtags(title, KAYLA_TIKTOK_TITLE_HASHTAGS, max_chars)
 
 
 def youtube_title_with_hashtags(title: str) -> str:
@@ -491,7 +487,9 @@ def main():
             os.remove(video_path)
 
     print(f"Kayla Ads result: successes={successes} failures={failures}")
-    if successes >= MIN_SUCCESSFUL_PLATFORMS:
+    required_successes = 1 if len(platforms) == 1 else MIN_SUCCESSFUL_PLATFORMS
+    print(f"Required successful platforms: {required_successes}")
+    if successes >= required_successes:
         mark_as_published(page_id)
     else:
         print("Not enough successful platforms. Keeping A publier.")

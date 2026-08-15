@@ -79,7 +79,24 @@ def parse_metadata_response(text: str, keys: Iterable[str] = METADATA_KEYS) -> d
 
 
 def _has_required_values(result: dict[str, str], required_keys: Iterable[str]) -> bool:
-    return all(result.get(key, "").strip() for key in required_keys)
+    for key in required_keys:
+        # TikTok receives its hashtags in the title and intentionally has no description.
+        if key == "TIKTOK_DESCRIPTION":
+            continue
+        if not isinstance(result.get(key), str) or not result.get(key, "").strip():
+            return False
+    return True
+
+
+def validate_metadata_contract(result: dict[str, str], required_keys: Iterable[str]) -> None:
+    """Reject malformed provider output before any upload is attempted."""
+
+    if not isinstance(result, dict):
+        raise ValueError("metadata response is not an object")
+    required = list(required_keys)
+    missing = [key for key in required if key != "TIKTOK_DESCRIPTION" and not result.get(key, "").strip()]
+    if missing:
+        raise ValueError(f"metadata response is missing: {', '.join(missing)}")
 
 
 def _call_groq(prompt: str) -> str:
@@ -146,8 +163,7 @@ def request_metadata(
     for provider, call in (("Groq", _call_groq), ("Gemini", _call_gemini)):
         try:
             result = parse_metadata_response(call(prompt), required)
-            if not _has_required_values(result, required):
-                raise ValueError("provider response is missing one or more required fields")
+            validate_metadata_contract(result, required)
             print(f"  Metadata provider: {provider} ({label})")
             return result
         except Exception as exc:
@@ -155,8 +171,7 @@ def request_metadata(
 
     print(f"  Metadata provider: deterministic local fallback ({label})")
     result = deterministic_fallback()
-    if not _has_required_values(result, required):
-        raise RuntimeError("deterministic metadata fallback did not produce all required fields")
+    validate_metadata_contract(result, required)
     return result
 
 

@@ -8,6 +8,22 @@ from pathlib import Path
 import pytz
 import requests
 from PIL import Image, ImageFilter
+from hashtag_utils import (
+    final_hashtags,
+    prepare_video_metadata,
+    tiktok_title_with_hashtags,
+    validate_prepared_metadata,
+)
+
+from publish_timing import (
+    LATE_WINDOW_MINUTES,
+    claim_slot,
+    queryable_dates,
+    read_slot_lock,
+    slot_is_due,
+    slot_key,
+    slot_sort_value,
+)
 
 
 UPLOAD_POST_PHOTO_ENDPOINT = "https://api.upload-post.com/api/upload_photos"
@@ -24,34 +40,6 @@ PINTEREST_BOARDS = {
     "kayla": "1108800439448657323",
 }
 
-SLOT_HOURS = {
-    "08:00": 8 * 60,
-    "12:00": 12 * 60,
-    "16:00": 16 * 60,
-    "00:00": 0,
-}
-
-SLOT_WINDOW_MINUTES = 90
-MIDNIGHT_SLOT_WINDOW_MINUTES = 180
-
-
-def slot_is_due(slot_name):
-    tz = pytz.timezone("America/Toronto")
-    now = datetime.now(tz)
-    current_minutes = now.hour * 60 + now.minute
-    slot_minutes = SLOT_HOURS.get(slot_name)
-
-    if slot_minutes is None:
-        return False
-
-    diff = current_minutes - slot_minutes
-
-    if slot_minutes == 0:
-        return 0 <= current_minutes <= MIDNIGHT_SLOT_WINDOW_MINUTES
-
-    return 0 <= diff <= SLOT_WINDOW_MINUTES
-
-
 def get_text(prop):
     if prop.get("type") == "title":
         return "".join(item.get("plain_text", "") for item in prop.get("title", []))
@@ -62,6 +50,9 @@ def get_text(prop):
     if prop.get("type") == "select":
         value = prop.get("select")
         return value.get("name", "") if value else ""
+    if prop.get("type") == "date":
+        value = prop.get("date")
+        return value.get("start", "") if value else ""
     return ""
 
 
@@ -79,13 +70,18 @@ def notion_headers():
 
 def get_images_to_publish(target_date=None):
     tz = pytz.timezone("America/Toronto")
-    today = target_date or datetime.now(tz).strftime("%Y-%m-%d")
+    dates = [target_date] if target_date else queryable_dates(datetime.now(tz))
 
     payload = {
         "filter": {
             "and": [
                 {"property": "Statut", "select": {"equals": "A publier"}},
-                {"property": "Date Publication", "date": {"equals": today}},
+                {
+                    "or": [
+                        {"property": "Date Publication", "date": {"equals": value}}
+                        for value in dates
+                    ]
+                },
             ]
         }
     }
@@ -180,6 +176,12 @@ def truncate_clean(text, max_length):
 
 def upload_photo_to_platform(image_path, avatar, caption, platform):
     normalized = platform.lower()
+    source_title = first_caption_line(caption)
+    title, caption = prepare_video_metadata(source_title, caption, avatar, normalized)
+    validate_prepared_metadata(title, caption, avatar, normalized)
+    if normalized == "tiktok":
+        title = tiktok_title_with_hashtags(source_title, avatar, TIKTOK_TITLE_MAX_LENGTH)
+    print(f"{platform} final hashtags: {' '.join(final_hashtags(title, caption))}")
 
     photo_file = image_path.open("rb")
     files = {"photos[]": (image_path.name, photo_file, "image/jpeg")}
@@ -194,14 +196,14 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
             data = {
                 "user": PINTEREST_PROFILE,
                 "platform[]": "pinterest",
-                "pinterest_title": caption.splitlines()[0][:100],
+                "pinterest_title": title[:100],
                 "pinterest_description": caption[:480],
                 "pinterest_board_id": board_id,
                 "link": EBOOK_LINK,
             }
 
         else:
-            title_text = caption if normalized == "facebook" else first_caption_line(caption)[:100]
+            title_text = caption if normalized == "facebook" else title[:100]
 
             data = {
                 "user": avatar,
@@ -215,7 +217,7 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
                 data["facebook_description"] = caption
 
             if normalized == "tiktok":
-                tiktok_title = truncate_clean(first_caption_line(caption), TIKTOK_TITLE_MAX_LENGTH)
+                tiktok_title = title
                 data["title"] = tiktok_title
                 data["tiktok_title"] = tiktok_title
                 data["tiktok_description"] = caption
@@ -240,7 +242,9 @@ def upload_photo_to_platform(image_path, avatar, caption, platform):
             return False
 
         platform_result = result.get("results", {}).get(normalized)
-        if isinstance(platform_result, dict) and platform_result.get("success") is False:
+        if isinstance(platform_result, dict) and (
+            platform_result.get("success") is not True or platform_result.get("status") == "failed"
+        ):
             print(f"{platform} failed: {platform_result}")
             return False
 
@@ -259,15 +263,17 @@ def publish_to_upload_post(image_path, avatar, caption, platforms):
         tiktok_path = None
         upload_path = image_path
 
-        if platform.lower() == "tiktok":
-            tiktok_path = make_tiktok_image(image_path)
-            upload_path = tiktok_path
-
         try:
+            if platform.lower() == "tiktok":
+                tiktok_path = make_tiktok_image(image_path)
+                upload_path = tiktok_path
             if upload_photo_to_platform(upload_path, avatar, caption, platform):
                 successes += 1
             else:
                 failures += 1
+        except Exception as exc:
+            failures += 1
+            print(f"{platform} failed without stopping the other platforms: {type(exc).__name__}: {exc}")
 
         finally:
             if tiktok_path:
@@ -311,7 +317,49 @@ def main():
     if args.limit:
         pages = pages[: args.limit]
 
-    print(f"Found {len(pages)} image posts to publish")
+    due_pages = [
+        page
+        for page in pages
+        if slot_is_due(
+            prop_text(page["properties"], "Slot"),
+            prop_text(page["properties"], "Date Publication"),
+        )
+    ]
+    if due_pages:
+        selected_key = min(
+            {
+                slot_key(
+                    prop_text(page["properties"], "Date Publication"),
+                    prop_text(page["properties"], "Slot"),
+                )
+                for page in due_pages
+            },
+            key=lambda value: slot_sort_value(*value.split("|", 1)),
+        )
+        pages = [
+            page
+            for page in due_pages
+            if slot_key(
+                prop_text(page["properties"], "Date Publication"),
+                prop_text(page["properties"], "Slot"),
+            )
+            == selected_key
+        ]
+    else:
+        selected_key = None
+        pages = []
+
+    print(f"Found {len(pages)} image posts in the selected slot")
+    print(f"Late publication window: {LATE_WINDOW_MINUTES} minutes")
+
+    if not pages:
+        return
+
+    existing_lock = read_slot_lock()
+    if existing_lock and existing_lock != selected_key:
+        print(f"Another slot is already active in this run ({existing_lock}); keeping images unchanged.")
+        return
+    slot_claimed = existing_lock == selected_key
 
     for page in pages:
         props = page["properties"]
@@ -324,25 +372,25 @@ def main():
 
         print(f"\n--- {avatar} | Slot: {slot} | Platforms: {platforms} ---")
 
-        if not slot_is_due(slot):
-            print(f"Slot {slot} not due yet - skipping.")
-            continue
-
         if not image_url:
             print("No image link - skipping.")
             continue
 
-        image_path = download_image(image_url)
-
+        image_path = None
         try:
+            image_path = download_image(image_url)
             if publish_to_upload_post(image_path, avatar, caption, platforms):
+                if not slot_claimed:
+                    claim_slot(selected_key)
+                    slot_claimed = True
                 mark_as_published(page["id"])
                 print(f"Marked as Publie: {page['id']}")
             else:
                 print(f"Keeping A publier: {page['id']}")
 
         finally:
-            image_path.unlink(missing_ok=True)
+            if image_path:
+                image_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

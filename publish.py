@@ -6,6 +6,7 @@ from pathlib import Path
 import pytz
 
 from metadata_provider import deterministic_metadata, request_metadata
+from hashtag_utils import final_hashtags, prepare_video_metadata, validate_prepared_metadata
 
 from publish_timing import (
     claim_slot,
@@ -114,7 +115,7 @@ def get_videos_to_publish():
             ]
         }
     }
-    response = requests.post(url, headers=NOTION_HEADERS, json=payload)
+    response = requests.post(url, headers=NOTION_HEADERS, json=payload, timeout=30)
     print("NOTION STATUT:", response.status_code)
     response.raise_for_status()
     return response.json().get("results", [])
@@ -297,9 +298,12 @@ def download_video(drive_url):
     print(f"  File ID: {file_id}")
     session = requests.Session()
     download_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0&confirm=t"
-    response = session.get(download_url, stream=True)
+    response = session.get(download_url, stream=True, timeout=90)
     print(f"  Download status: {response.status_code}")
     print(f"  Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+    response.raise_for_status()
+    if "text/html" in response.headers.get("Content-Type", "").lower():
+        raise RuntimeError("Google Drive returned HTML instead of a video file")
     tmp_path = f"/tmp/video_{file_id}.mp4"
     with open(tmp_path, "wb") as f:
         for chunk in response.iter_content(chunk_size=32768):
@@ -328,6 +332,9 @@ def publish_video(video_path, titre, description, avatar, platform):
         raise ValueError(f"Unknown platform: {platform}")
 
     print(f"  Publishing on: {platform_key}")
+    titre, description = prepare_video_metadata(titre, description, avatar, platform_key)
+    validate_prepared_metadata(titre, description, avatar, platform_key)
+    print(f"  Final hashtags sent: {' '.join(final_hashtags(titre, description))}")
     url = "https://api.upload-post.com/api/upload"
 
     if platform_key == "pinterest":
@@ -368,6 +375,13 @@ def publish_video(video_path, titre, description, avatar, platform):
                     ("privacyStatus", "public"),
                 ]
             )
+        elif platform_key == "tiktok":
+            data_params.extend(
+                [
+                    ("tiktok_title", titre),
+                    ("tiktok_description", description),
+                ]
+            )
 
     with open(video_path, "rb") as video_file:
         response = requests.post(
@@ -375,10 +389,14 @@ def publish_video(video_path, titre, description, avatar, platform):
             headers={"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"},
             data=data_params,
             files={"video": ("video.mp4", video_file, "video/mp4")},
+            timeout=180,
         )
 
     print(f"  UPLOAD STATUS {platform}: {response.status_code}")
     print(f"  UPLOAD RESPONSE {platform}: {response.text[:200]}")
+
+    if response.status_code >= 400:
+        return {"success": False, "status": "failed", "message": f"HTTP {response.status_code}"}
 
     try:
         result = response.json()
@@ -388,10 +406,23 @@ def publish_video(video_path, titre, description, avatar, platform):
     return result
 
 
+def upload_result_succeeded(result, platform_key):
+    """Require the platform-level result when Upload-Post provides one."""
+
+    if not isinstance(result, dict):
+        return False
+    if result.get("success") is False or result.get("status") == "failed":
+        return False
+    platform_result = result.get("results", {}).get(platform_key)
+    if isinstance(platform_result, dict):
+        return platform_result.get("success") is True and platform_result.get("status") != "failed"
+    return result.get("success") is True
+
+
 def mark_as_published(page_id):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     payload = {"properties": {"Statut": {"select": {"name": "Publie"}}}}
-    response = requests.patch(url, headers=NOTION_HEADERS, json=payload)
+    response = requests.patch(url, headers=NOTION_HEADERS, json=payload, timeout=30)
     response.raise_for_status()
     print("  Notion updated -> Publie")
 
@@ -477,6 +508,8 @@ def main():
             if not description:
                 description = metadata.get("YOUTUBE_DESCRIPTION", "")
 
+            titre, description = prepare_video_metadata(titre, description, avatar, platform)
+
             print(f"\n  [{platform}]")
             print(f"  Title: {titre[:80]}")
             print(f"  Description: {description[:100]}...")
@@ -497,14 +530,17 @@ def main():
                 print(f"  Invalid upload response on {platform}: {result!r}")
                 continue
 
-            if not (result.get("success") and result.get("status") != "failed"):
+            platform_key = platform.lower()
+            if not upload_result_succeeded(result, platform_key):
                 failures += 1
                 print(f"  Failed on {platform}")
             else:
                 successes += 1
 
         print(f"  Publish result: successes={successes} failures={failures}")
-        if successes >= MIN_SUCCESSFUL_PLATFORMS:
+        required_successes = 1 if len(plateformes) == 1 else MIN_SUCCESSFUL_PLATFORMS
+        print(f"  Required successful platforms: {required_successes}")
+        if successes >= required_successes:
             if not slot_claimed:
                 claim_slot(selected_key)
                 slot_claimed = True
