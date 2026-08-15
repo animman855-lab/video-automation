@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytz
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from dialogue_parser import parse_dialogue_script
 from drive_client import check_drive_secrets, upload_video_make_public
 from image_analyzer import ImageAnalysisError, analyze_vocabulary_grid, analyze_vocabulary_labels_ocr
@@ -34,6 +36,13 @@ from safety import (
     require_item_budget,
     require_non_empty,
     require_tts_budget,
+)
+from publish_timing import (
+    queryable_dates,
+    read_slot_lock,
+    slot_is_due as shared_slot_is_due,
+    slot_key,
+    slot_sort_value,
 )
 from script_parser import parse_vocabulary_cta, parse_vocabulary_items
 from tts_google import (
@@ -63,7 +72,7 @@ except Exception as exc:
     KPipeline = None
     KOKORO_CINDY_GUEST_VOICE = "am_puck"
     KOKORO_CINDY_VOICE = "af_jessica"
-    KOKORO_OLIVIAA_MALE_VOICE = "am_echo"
+    KOKORO_OLIVIAA_MALE_VOICE = "bm_daniel"
     KOKORO_OLIVIAA_VOICE = "bf_emma"
     KOKORO_TEACHERRYAN_VOICE = "am_echo"
     KOKORO_THEFLUENTBUILD_GRANDMA_VOICE = "af_aoede"
@@ -75,15 +84,6 @@ else:
     KOKORO_IMPORT_ERROR = None
 
 
-SLOT_HOURS = {
-    "08:00": 8 * 60,
-    "10:00": 10 * 60,
-    "12:00": 12 * 60,
-    "16:00": 16 * 60,
-    "20:00": 20 * 60,
-    "22:00": 22 * 60,
-    "00:00": 0,
-}
 SUPPORTED_AVATARS = {"teacherryan", "oliviaa", "thefluentbuild", "cindy"}
 TEACHERRYAN_FIXED_TARGETS = [
     (300, 420),
@@ -127,18 +127,6 @@ def toronto_now() -> datetime:
     return datetime.now(pytz.timezone("America/Toronto"))
 
 
-def slot_is_due(slot_name: str, now: datetime | None = None) -> bool:
-    current = now or toronto_now()
-    current_minutes = current.hour * 60 + current.minute
-    slot_minutes = SLOT_HOURS.get(slot_name)
-    if slot_minutes is None:
-        return False
-    diff = current_minutes - slot_minutes
-    if slot_minutes == 0:
-        diff = current_minutes if current_minutes < 180 else -1
-    return 0 <= diff <= 480
-
-
 def max_videos_per_run() -> int:
     value = int(os.getenv("HYPERFRAMES_MAX_VIDEOS", "5"))
     return max(1, min(value, 5))
@@ -146,20 +134,48 @@ def max_videos_per_run() -> int:
 
 def _ready_rows_for_now() -> list[dict]:
     now = toronto_now()
-    today = now.strftime("%Y-%m-%d")
-    rows = query_ready_hyperframes_rows(today)
+    rows: list[dict] = []
+    seen_ids: set[str] = set()
+    for publication_date in queryable_dates(now):
+        for row in query_ready_hyperframes_rows(publication_date):
+            if row.get("id") not in seen_ids:
+                rows.append(row)
+                seen_ids.add(row.get("id"))
+
     due_rows: list[dict] = []
+    candidates: list[tuple[datetime, str]] = []
+    for row in rows:
+        props = row.get("properties", {})
+        avatar = prop_text(props, "Avatar").lower()
+        slot = prop_text(props, "Slot")
+        publication_date = prop_text(props, "Date Publication")
+        if avatar not in SUPPORTED_AVATARS:
+            print(f"Skipping unsupported HyperFrames avatar: {avatar}")
+            continue
+        if not shared_slot_is_due(slot, publication_date, now):
+            print(f"Slot {slot} not due yet for HyperFrames row {row.get('id')} - skipping.")
+            continue
+        candidates.append((slot_sort_value(publication_date, slot), slot_key(publication_date, slot)))
+
+    if not candidates:
+        return []
+
+    selected_key = min(candidates, key=lambda item: item[0])[1]
+    existing_lock = read_slot_lock()
+    if existing_lock and existing_lock != selected_key:
+        print(f"Another slot is already active in this run ({existing_lock}); skipping HyperFrames generation.")
+        return []
+
     avatars_seen: set[str] = set()
 
     for row in rows:
         props = row.get("properties", {})
         avatar = prop_text(props, "Avatar").lower()
         slot = prop_text(props, "Slot")
+        publication_date = prop_text(props, "Date Publication")
         if avatar not in SUPPORTED_AVATARS:
-            print(f"Skipping unsupported HyperFrames avatar: {avatar}")
             continue
-        if not slot_is_due(slot, now):
-            print(f"Slot {slot} not due yet for HyperFrames row {row.get('id')} - skipping.")
+        if slot_key(publication_date, slot) != selected_key:
             continue
         if avatar in avatars_seen:
             print(f"Avatar {avatar} already selected for this HyperFrames run - skipping row {row.get('id')}.")
@@ -358,6 +374,50 @@ def _synthesize_line_with_kokoro_google_fallback(
         )
 
 
+def _synthesize_line_with_google_kokoro_fallback(
+    text: str,
+    output_path: Path,
+    kokoro_voice: str,
+    google_voice: str,
+    google_rate: float,
+    pipeline,
+    label: str,
+) -> Path:
+    """Use Google as the primary voice and Kokoro only as a local fallback."""
+    spoken = _smooth_spoken_text(text)
+    try:
+        print(f"{label} TTS provider: Google TTS {google_voice}")
+        token = _access_token()
+        return _synthesize_text(
+            spoken,
+            output_path.with_suffix(".mp3"),
+            token,
+            voice_name=google_voice,
+            speaking_rate=google_rate,
+        )
+    except Exception as exc:
+        print(
+            f"WARNING: {label} Google TTS failed "
+            f"({type(exc).__name__}: {exc}). Falling back to Kokoro {kokoro_voice}."
+        )
+        if pipeline is None:
+            raise RuntimeError(
+                f"{label} failed with Google TTS and Kokoro is unavailable."
+            ) from exc
+        try:
+            print(f"{label} fallback provider: Kokoro {kokoro_voice}")
+            return synthesize_text_kokoro(
+                spoken,
+                output_path.with_suffix(".wav"),
+                kokoro_voice,
+                pipeline=pipeline,
+            )
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                f"{label} failed with both Google TTS and Kokoro fallback."
+            ) from fallback_exc
+
+
 def _synthesize_oliviaa_dialogue_audios(
     lines: list[str],
     cta: str,
@@ -383,17 +443,30 @@ def _synthesize_oliviaa_dialogue_audios(
         google_voice = "en-US-Neural2-F" if is_oliviaa else "en-US-Neural2-D"
         google_rate = 0.94 if is_oliviaa else 0.92
         output_path = output_dir / f"line_{index:02d}"
-        line_paths.append(
-            _synthesize_line_with_kokoro_google_fallback(
-                line,
-                output_path,
-                kokoro_voice,
-                google_voice,
-                google_rate,
-                pipeline,
-                f"Oliviaa line {index}",
+        if is_oliviaa:
+            line_paths.append(
+                _synthesize_line_with_kokoro_google_fallback(
+                    line,
+                    output_path,
+                    kokoro_voice,
+                    google_voice,
+                    google_rate,
+                    pipeline,
+                    f"Oliviaa line {index}",
+                )
             )
-        )
+        else:
+            line_paths.append(
+                _synthesize_line_with_google_kokoro_fallback(
+                    line,
+                    output_path,
+                    KOKORO_OLIVIAA_MALE_VOICE,
+                    google_voice,
+                    google_rate,
+                    pipeline,
+                    f"Oliviaa male line {index}",
+                )
+            )
 
     cta_path = None
     if cta:

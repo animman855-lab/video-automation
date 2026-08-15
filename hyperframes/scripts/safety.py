@@ -11,7 +11,8 @@ class SafetyError(RuntimeError):
 @dataclass(frozen=True)
 class PilotLimits:
     max_rows: int = 1
-    max_tts_chars: int = 500
+    # Keep the guardrail, but allow a short app presentation after the vocabulary.
+    max_tts_chars: int = 1000
     max_images: int = 0
     max_audio_files: int = int(os.getenv("HYPERFRAMES_MAX_ITEMS", "20"))
     max_videos: int = 1

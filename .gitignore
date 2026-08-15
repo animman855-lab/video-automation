@@ -8,3 +8,4 @@ __pycache__/
 hyperframes-output/
 kayla-output/
 output/
+content_registry/*.json

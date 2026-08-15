@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from drive_client import check_drive_secrets, upload_video_make_public
 from notion_client import (
     load_local_env,
@@ -22,21 +24,7 @@ from notion_client import (
     query_ready_kayla_flow_rows,
     set_video_link,
 )
-
-
-SLOT_HOURS = {
-    "00:00": 0,
-    "02:00": 2 * 60,
-    "08:00": 8 * 60,
-    "10:00": 10 * 60,
-    "12:00": 12 * 60,
-    "14:00": 14 * 60,
-    "16:00": 16 * 60,
-    "18:00": 18 * 60,
-    "20:00": 20 * 60,
-    "22:00": 22 * 60,
-}
-SLOT_WINDOW_MINUTES = 240
+from publish_timing import queryable_dates, slot_is_due, slot_sort_value
 
 
 def repo_root() -> Path:
@@ -63,18 +51,6 @@ def toronto_now() -> datetime:
         return datetime.now(ZoneInfo("America/Toronto"))
     except Exception:
         return datetime.now(timezone(timedelta(hours=-4)))
-
-
-def slot_is_due(slot_name: str, now: datetime | None = None) -> bool:
-    current = now or toronto_now()
-    current_minutes = current.hour * 60 + current.minute
-    slot_minutes = SLOT_HOURS.get(slot_name)
-    if slot_minutes is None:
-        return False
-    if slot_minutes == 0:
-        return current_minutes <= SLOT_WINDOW_MINUTES
-    diff = current_minutes - slot_minutes
-    return 0 <= diff <= SLOT_WINDOW_MINUTES
 
 
 def parse_args() -> argparse.Namespace:
@@ -1320,7 +1296,8 @@ def render_final_video(source_video: Path, output_video: Path, work_dir: Path, c
 
     normalized_source_duration = _video_duration_seconds(ffmpeg, normalized_source)
     print(f"Final Kayla video duration without outro: {normalized_source_duration:.2f}s")
-    print("Kayla cards disabled. Keeping Flow video clean, adding auto-subtitles, no outro.")
+    subtitle_state = "without auto-subtitles" if not KAYLA_SUBTITLES_ENABLED else "with auto-subtitles"
+    print(f"Kayla cards disabled. Keeping Flow video clean {subtitle_state}, no outro.")
     shutil.copyfile(normalized_source, output_video)
     if not output_video.exists() or output_video.stat().st_size < 1024:
         raise RuntimeError("Final Kayla video was not created correctly.")
@@ -1349,15 +1326,24 @@ def _drive_upload_enabled() -> bool:
 
 
 def _select_due_row(rows: list[dict], now: datetime) -> dict | None:
+    candidates = []
     for row in rows:
         props = row.get("properties", {})
         slot = prop_text(props, "Slot")
+        publication_date = prop_text(props, "Date Publication")
         title = prop_text(props, "Titre") or "Kayla Flow"
-        if not slot_is_due(slot, now):
+        if not slot_is_due(slot, publication_date, now):
             print(f"Skipping {title}: slot {slot} not due for Kayla post-process.")
             continue
-        return row
-    return None
+        if not prop_text(props, "Image HyperFrames"):
+            print(f"Skipping {title}: Image HyperFrames is empty.")
+            continue
+        candidates.append((slot_sort_value(publication_date, slot), row))
+    return min(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def _target_dates(target_date: str | None) -> list[str]:
+    return [target_date] if target_date else queryable_dates(toronto_now())
 
 
 def _print_row(row: dict) -> None:
@@ -1371,14 +1357,15 @@ def _print_row(row: dict) -> None:
     print(f"- lien_video_empty: {not bool(prop_text(props, 'Lien Video'))}")
 
 
-def dry_run(target_date: str) -> int:
+def dry_run(target_date: str | None) -> int:
     now = toronto_now()
-    rows = query_ready_kayla_flow_rows(target_date)
+    target_dates = _target_dates(target_date)
+    rows = query_ready_kayla_flow_rows(target_dates)
     selected = _select_due_row(rows, now)
     print("KAYLA POST-PROCESS DRY-RUN")
     print("No video render, optional Drive upload, Notion update, or publication will run.")
     print(f"Current time (Montreal): {now.strftime('%Y-%m-%d %H:%M')}")
-    print(f"Target date: {target_date}")
+    print(f"Target dates: {', '.join(target_dates)}")
     print(f"Ready source row(s): {len(rows)}")
     print(f"Local output dir: {_local_output_dir()}")
     print(f"Drive upload enabled: {_drive_upload_enabled()}")
@@ -1390,12 +1377,13 @@ def dry_run(target_date: str) -> int:
     return 0
 
 
-def execute(target_date: str) -> int:
+def execute(target_date: str | None) -> int:
     now = toronto_now()
-    rows = query_ready_kayla_flow_rows(target_date)
+    target_dates = _target_dates(target_date)
+    rows = query_ready_kayla_flow_rows(target_dates)
     selected = _select_due_row(rows, now)
     print(f"Current time (Montreal): {now.strftime('%Y-%m-%d %H:%M')}")
-    print(f"Kayla post-process target date: {target_date}")
+    print(f"Kayla post-process target dates: {', '.join(target_dates)}")
     print(f"Ready Kayla Flow source row(s): {len(rows)}")
     if not selected:
         print("No due Kayla Flow row found. Nothing to prepare.")
@@ -1435,7 +1423,7 @@ def execute(target_date: str) -> int:
 def main() -> int:
     args = parse_args()
     load_local_env(repo_root())
-    target_date = args.date or toronto_now().strftime("%Y-%m-%d")
+    target_date = args.date
     if args.execute:
         return execute(target_date)
     return dry_run(target_date)

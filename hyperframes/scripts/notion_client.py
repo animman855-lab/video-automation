@@ -102,7 +102,8 @@ def query_ready_hyperframes_rows(publication_date: str, page_size: int = 20) -> 
     return response.json().get("results", [])
 
 
-def query_ready_kayla_flow_rows(publication_date: str, page_size: int = 20) -> list[dict]:
+def query_ready_kayla_flow_rows(publication_dates: str | list[str], page_size: int = 20) -> list[dict]:
+    dates = [publication_dates] if isinstance(publication_dates, str) else list(publication_dates)
     database_id = get_database_id()
     payload = {
         "filter": {
@@ -110,7 +111,12 @@ def query_ready_kayla_flow_rows(publication_date: str, page_size: int = 20) -> l
                 {"property": "Avatar", "select": {"equals": "kayla"}},
                 {"property": "Video Type", "select": {"equals": "Visual Vocabulary"}},
                 {"property": "Statut", "select": {"equals": "A publier"}},
-                {"property": "Date Publication", "date": {"equals": publication_date}},
+                {
+                    "or": [
+                        {"property": "Date Publication", "date": {"equals": value}}
+                        for value in dates
+                    ]
+                },
                 {"property": "Image HyperFrames", "url": {"is_not_empty": True}},
                 {"property": "Lien Video", "url": {"is_empty": True}},
             ]
