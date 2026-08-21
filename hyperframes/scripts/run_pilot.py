@@ -588,6 +588,10 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     cta = parse_vocabulary_cta(script, TEACHERRYAN_FALLBACK_CTA)
     require_item_budget(items, limits)
     require_tts_budget(script, limits)
+    print(
+        "TeacherRyan TTS input (spoken segments): "
+        + " | ".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
+    )
 
     image_path = download_image(image_url, work_dir / "source_image")
     target_mode = os.getenv("TEACHERRYAN_ARROW_TARGET_MODE", "ocr").strip().lower()

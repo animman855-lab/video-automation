@@ -14,6 +14,8 @@ IGNORE_PREFIXES = (
     "follow ",
 )
 
+SOURCE_LABEL_RE = re.compile(r"^(?:items?|phrases?)\s*:\s*", flags=re.IGNORECASE)
+
 
 def parse_vocabulary_items(script: str) -> list[str]:
     """Extract spoken vocabulary items from the Notion Script field.
@@ -31,7 +33,8 @@ def parse_vocabulary_items(script: str) -> list[str]:
         if lower.startswith(IGNORE_PREFIXES):
             continue
         if "," in line:
-            candidates.append(line)
+            # Keep Notion readable while preventing metadata labels from becoming spoken text.
+            candidates.append(SOURCE_LABEL_RE.sub("", line))
 
     if not candidates:
         raise ScriptParseError("No comma-separated vocabulary line found in Script.")
