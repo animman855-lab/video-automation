@@ -78,7 +78,14 @@ def query_ready_hyperframes_rows(publication_date: str, page_size: int = 20) -> 
             "and": [
                 {"property": "Date Publication", "date": {"equals": publication_date}},
                 {"property": "Video Type", "select": {"equals": "HyperFrames"}},
-                {"property": "Statut", "select": {"equals": "En cours"}},
+                {
+                    "or": [
+                        {"property": "Statut", "select": {"equals": "En cours"}},
+                        # Recover a rendered row left ready-to-publish when the
+                        # runner lost its local MP4 before publish.py consumed it.
+                        {"property": "Statut", "select": {"equals": "A publier"}},
+                    ]
+                },
                 {"property": "Image HyperFrames", "url": {"is_not_empty": True}},
                 {"property": "Lien Video", "url": {"is_empty": True}},
             ]
