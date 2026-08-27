@@ -220,6 +220,7 @@ def _build_synced_audio(
     output_audio_path: Path,
     audio_work_dir: Path,
     cta_audio_path: Path | None = None,
+    include_cta: bool = True,
 ) -> tuple[Path, list[ItemSegment], float]:
     if len(items) > MAX_ITEMS:
         raise ValueError(f"TeacherRyan HyperFrames supports at most {MAX_ITEMS} items, got {len(items)}.")
@@ -267,7 +268,7 @@ def _build_synced_audio(
                 segments.append(ItemSegment(item=item, start=start, end=end, page=page))
                 current = end
 
-        if cta_audio_path:
+        if include_cta and cta_audio_path:
             cta_wav_path = _convert_to_wav(ffmpeg, cta_audio_path, audio_work_dir / "cta.wav")
             with wave.open(str(cta_wav_path), "rb") as reader:
                 params = reader.getparams()
@@ -283,7 +284,7 @@ def _build_synced_audio(
                 writer.writeframes(reader.readframes(frames_count))
                 _write_silence(writer, max(0.4, CTA_SECONDS - cta_duration))
                 current += max(CTA_SECONDS, cta_duration + 0.4)
-        else:
+        elif include_cta:
             _write_silence(writer, CTA_SECONDS)
             current += CTA_SECONDS
 
@@ -309,6 +310,7 @@ def render_teacher_ryan_video(
     item_targets: dict[str, tuple[int, int]],
     cta_audio_path: Path | None = None,
     cta_text: str = "Practice these words in real conversations with Saloo English.",
+    include_cta: bool = True,
 ) -> Path:
     import imageio_ffmpeg
 
@@ -333,6 +335,7 @@ def render_teacher_ryan_video(
         output_audio_path=frames_dir.parent / "teacherryan-synced-audio.wav",
         audio_work_dir=audio_work_dir,
         cta_audio_path=cta_audio_path,
+        include_cta=include_cta,
     )
     total_frames = int(FPS * duration)
 
@@ -349,7 +352,7 @@ def render_teacher_ryan_video(
             target = item_targets[animal]
             _draw_arrow(draw, target, pulse)
             _draw_current_word(draw, animal, pulse)
-        else:
+        elif include_cta:
             _draw_cta(draw, cta_text)
 
         frame.save(frames_dir / f"frame_{frame_index:04d}.jpg", "JPEG", quality=92)

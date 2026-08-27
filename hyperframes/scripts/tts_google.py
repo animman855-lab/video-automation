@@ -80,11 +80,15 @@ def synthesize_item_audios(words: list[str], output_dir: Path) -> dict[str, Path
     return audio_paths
 
 
-def synthesize_teacher_ryan_audios(words: list[str], cta: str, output_dir: Path) -> tuple[dict[str, Path], Path]:
+def synthesize_teacher_ryan_audios(
+    words: list[str], cta: str | None, output_dir: Path
+) -> tuple[dict[str, Path], Path | None]:
     item_paths = synthesize_item_audios(words, output_dir)
-    token = _access_token()
-    cta_path = output_dir / "cta.mp3"
-    _synthesize_text(cta, cta_path, token, voice_name="en-US-Neural2-D", speaking_rate=0.86)
+    cta_path = None
+    if cta:
+        token = _access_token()
+        cta_path = output_dir / "cta.mp3"
+        _synthesize_text(cta, cta_path, token, voice_name="en-US-Neural2-D", speaking_rate=0.86)
     return item_paths, cta_path
 
 

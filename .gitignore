@@ -9,3 +9,8 @@ hyperframes-output/
 kayla-output/
 output/
 content_registry/*.json
+!hyperframes/assets/
+!hyperframes/assets/teacherryan-cta.mp4
+!hyperframes/assets/oliviaa-cta.mp4
+!hyperframes/assets/thefluentbuild-cta.mp4
+!hyperframes/assets/cindy-cta.mp4

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -26,6 +25,7 @@ from notion_client import (
 )
 from podcast_parser import parse_podcast_script
 from render_cindy_podcast import render_cindy_podcast_video
+from hyperframes_outro import append_hyperframes_outro
 from render_oliviaa_drama import render_oliviaa_drama_video
 from render_thefluentbuild_grandma import render_thefluentbuild_grandma_video
 from render_video import download_image, render_teacher_ryan_video
@@ -98,19 +98,6 @@ TEACHERRYAN_FIXED_TARGETS = [
     (780, 1340),
 ]
 TEACHERRYAN_FALLBACK_CTA = "Practice these words in real conversations with Saloo English."
-OLIVIAA_FALLBACK_CTA = (
-    "By the way, there is an app called Saloo English. "
-    "It helps you practice real situations like this. Link in bio."
-)
-THEFLUENTBUILD_CTA_VARIATIONS = [
-    "Find Saloo English in my profile.",
-    "Go to my profile to try Saloo English.",
-    "You can find Saloo English on my profile.",
-    "Open my profile and try Saloo English.",
-    "Saloo English is on my profile.",
-]
-THEFLUENTBUILD_FALLBACK_CTA = THEFLUENTBUILD_CTA_VARIATIONS[0]
-CTA_DETECTION_PATTERN = re.compile(r"\b(saloo english|link in bio|profile|my bio)\b", re.IGNORECASE)
 
 
 def repo_root() -> Path:
@@ -515,64 +502,6 @@ def _synthesize_cindy_podcast_audios(lines: list, output_dir: Path) -> list[Path
     return synthesize_cindy_podcast_audios_google(lines, output_dir / "google")
 
 
-def _text_has_app_cta(text: str) -> bool:
-    return bool(CTA_DETECTION_PATTERN.search(text))
-
-
-def _append_sentence(text: str, addition: str) -> str:
-    text = text.strip()
-    addition = addition.strip()
-    if not addition:
-        return text
-    if not text:
-        return addition
-    separator = " " if text[-1] in ".!?" else ". "
-    return f"{text}{separator}{addition}"
-
-
-def _append_cta_to_last_preferred_line(dialogue, preferred_speakers: set[str], fallback_cta: str, label: str):
-    lines = list(dialogue.lines)
-    speakers = list(dialogue.speakers)
-    if not lines:
-        return dialogue
-
-    preferred_speaker = (
-        "grandma"
-        if "grandma" in preferred_speakers
-        else "oliviaa"
-        if preferred_speakers & {"olivia", "oliviaa", "oliviaaa"}
-        else sorted(preferred_speakers)[0]
-    )
-    if len(speakers) < len(lines):
-        speakers.extend([""] * (len(lines) - len(speakers)))
-
-    target_index = len(lines) - 1
-    if speakers[target_index] not in preferred_speakers:
-        speakers[target_index] = preferred_speaker
-        print(
-            f"WARNING: {label} final speaker was missing or unexpected. "
-            f"Using the last line as {preferred_speaker}; rendering continues."
-        )
-
-    if _text_has_app_cta(lines[target_index]):
-        if dialogue.cta:
-            print(f"{label} CTA already integrated in dialogue. Separate CTA ignored.")
-        return replace(dialogue, lines=lines, speakers=speakers, cta="")
-
-    if any(_text_has_app_cta(line) for line in lines):
-        print(
-            f"WARNING: {label} CTA text was found outside the final speaker line. "
-            "Keeping the existing CTA text without adding a second CTA."
-        )
-        return replace(dialogue, lines=lines, speakers=speakers, cta="")
-
-    cta = dialogue.cta or fallback_cta
-
-    lines[target_index] = _append_sentence(lines[target_index], cta)
-    print(f"{label} CTA integrated into dialogue line {target_index + 1}.")
-    return replace(dialogue, lines=lines, speakers=speakers, cta="")
-
-
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     limits = PilotLimits()
     props = row.get("properties", {})
@@ -603,12 +532,13 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
 
     item_audio_paths, cta_audio_path = _synthesize_teacher_ryan_audios(
         items,
-        cta,
+        "",
         work_dir / "item_audio",
     )
     for item in items:
         require_file_created(str(item_audio_paths[item]), f"TTS audio for {item}")
-    require_file_created(str(cta_audio_path), "TTS audio for TeacherRyan CTA")
+    if cta_audio_path is not None:
+        require_file_created(str(cta_audio_path), "TTS audio for TeacherRyan CTA")
 
     video_path = render_teacher_ryan_video(
         image_path=image_path,
@@ -619,6 +549,7 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
         item_targets=item_targets,
         cta_audio_path=cta_audio_path,
         cta_text=cta,
+        include_cta=False,
     )
     require_file_created(str(video_path), "TeacherRyan HyperFrames video")
     return video_path
@@ -635,23 +566,16 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
     require_non_empty(prompt_1, "Prompt 1")
 
     dialogue = parse_dialogue_script(script, require_cta=False)
-    dialogue = _append_cta_to_last_preferred_line(
-        dialogue,
-        {"olivia", "oliviaa", "oliviaaa"},
-        OLIVIAA_FALLBACK_CTA,
-        "Oliviaa",
-    )
     image_path = download_image(image_url, work_dir / "source_image")
     line_audio_paths, cta_audio_path = _synthesize_oliviaa_dialogue_audios(
         dialogue.lines,
-        dialogue.cta,
+        "",
         work_dir / "dialogue_audio",
         speakers=dialogue.speakers,
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for Oliviaa line {index}")
-    if cta_audio_path is not None:
-        require_file_created(str(cta_audio_path), "TTS audio for Oliviaa CTA")
+    cta_audio_path = None
 
     video_path = render_oliviaa_drama_video(
         image_path=image_path,
@@ -665,24 +589,6 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
     return video_path
 
 
-def _prepare_thefluentbuild_dialogue(script: str):
-    dialogue = parse_dialogue_script(script, require_cta=False)
-    if dialogue.cta:
-        return _append_cta_to_last_preferred_line(
-            dialogue,
-            {"grandma"},
-            THEFLUENTBUILD_FALLBACK_CTA,
-            "TheFluentBuild",
-        )
-
-    return _append_cta_to_last_preferred_line(
-        dialogue,
-        {"grandma"},
-        THEFLUENTBUILD_FALLBACK_CTA,
-        "TheFluentBuild",
-    )
-
-
 def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     props = row.get("properties", {})
     script = prop_text(props, "Script")
@@ -693,7 +599,7 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     require_non_empty(script, "Script")
     require_non_empty(prompt_1, "Prompt 1")
 
-    dialogue = _prepare_thefluentbuild_dialogue(script)
+    dialogue = parse_dialogue_script(script, require_cta=False)
     if "grandma" not in dialogue.speakers:
         dialogue = replace(
             dialogue,
@@ -702,14 +608,13 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
     image_path = download_image(image_url, work_dir / "source_image")
     line_audio_paths, cta_audio_path = _synthesize_thefluentbuild_dialogue_audios(
         dialogue.lines,
-        dialogue.cta,
+        "",
         work_dir / "thefluentbuild_audio",
         speakers=dialogue.speakers,
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for TheFluentBuild line {index}")
-    if cta_audio_path is not None:
-        require_file_created(str(cta_audio_path), "TTS audio for TheFluentBuild CTA")
+    cta_audio_path = None
 
     video_path = render_thefluentbuild_grandma_video(
         image_path=image_path,
@@ -771,6 +676,22 @@ def _execute_row(row: dict) -> bool:
     work_dir = Path(tempfile.mkdtemp(prefix="hyperframes_"))
     try:
         video_path = _render_row(row, work_dir)
+        avatar = prop_text(row.get("properties", {}), "Avatar")
+        outro_enabled = os.getenv("HYPERFRAMES_OUTRO_ENABLED", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        if outro_enabled:
+            try:
+                video_path = append_hyperframes_outro(video_path, avatar, work_dir / "outro")
+                print(f"HyperFrames outro appended for {avatar}.")
+            except Exception as exc:
+                print(
+                    f"WARNING: HyperFrames outro failed for {avatar} "
+                    f"({type(exc).__name__}: {exc}). Continuing with the base video."
+                )
         local_video_path = _local_output_dir() / video_path.name
         shutil.copy2(video_path, local_video_path)
         print(f"HyperFrames final video ready locally: {local_video_path}")
