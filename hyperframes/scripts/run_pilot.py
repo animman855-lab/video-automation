@@ -692,7 +692,9 @@ def _execute_row(row: dict) -> bool:
                     f"WARNING: HyperFrames outro failed for {avatar} "
                     f"({type(exc).__name__}: {exc}). Continuing with the base video."
                 )
-        local_video_path = _local_output_dir() / video_path.name
+        # Keep the canonical row-based filename so publish.py can discover the
+        # final video after an avatar-specific outro has been appended.
+        local_video_path = _local_output_dir() / _output_name(row)
         shutil.copy2(video_path, local_video_path)
         print(f"HyperFrames final video ready locally: {local_video_path}")
 
