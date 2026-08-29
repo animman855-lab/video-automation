@@ -13,6 +13,14 @@ import requests
 REQUIRED_TTS_SECRETS = ["GOOGLE_TTS_CREDENTIALS_JSON"]
 
 
+def _tts_timeout() -> tuple[float, float]:
+    try:
+        read_timeout = float(os.getenv("HYPERFRAMES_TTS_READ_TIMEOUT", "60"))
+    except ValueError:
+        read_timeout = 60.0
+    return 10.0, max(10.0, min(read_timeout, 180.0))
+
+
 def check_tts_secrets() -> list[str]:
     return [name for name in REQUIRED_TTS_SECRETS if not os.getenv(name)]
 
@@ -63,7 +71,7 @@ def synthesize_item_audios(words: list[str], output_dir: Path) -> dict[str, Path
                 "voice": {"languageCode": "en-US", "name": "en-US-Neural2-D"},
                 "audioConfig": {"audioEncoding": "MP3", "speakingRate": 0.78},
             },
-            timeout=60,
+            timeout=_tts_timeout(),
         )
         if response.status_code >= 400:
             raise RuntimeError(f"Google TTS failed for '{word}': {response.status_code} {response.text}")
@@ -111,7 +119,7 @@ def _synthesize_text(
             "voice": {"languageCode": "en-US", "name": voice_name},
             "audioConfig": {"audioEncoding": "MP3", "speakingRate": speaking_rate},
         },
-        timeout=60,
+        timeout=_tts_timeout(),
     )
     if response.status_code >= 400:
         raise RuntimeError(f"Google TTS failed for '{text}': {response.status_code} {response.text}")
@@ -246,7 +254,7 @@ def synthesize_words(words: list[str], output_path: Path) -> Path:
             "voice": {"languageCode": "en-US", "name": "en-US-Neural2-D"},
             "audioConfig": {"audioEncoding": "MP3", "speakingRate": 0.78},
         },
-        timeout=60,
+        timeout=_tts_timeout(),
     )
     if response.status_code >= 400:
         raise RuntimeError(f"Google TTS failed: {response.status_code} {response.text}")

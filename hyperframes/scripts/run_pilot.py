@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
+import re
 import shutil
 import sys
 import tempfile
+import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 import pytz
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -98,6 +102,84 @@ TEACHERRYAN_FIXED_TARGETS = [
     (780, 1340),
 ]
 TEACHERRYAN_FALLBACK_CTA = "Practice these words in real conversations with Saloo English."
+TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+
+
+class HyperFramesStageError(RuntimeError):
+    """Preserve the pipeline stage while keeping the original exception chain."""
+
+    def __init__(self, stage: str, cause: Exception):
+        self.stage = stage
+        self.cause = cause
+        super().__init__(f"{stage}: {type(cause).__name__}: {cause}")
+
+
+def _run_stage(stage: str, operation):
+    try:
+        return operation()
+    except Exception as exc:
+        raise HyperFramesStageError(stage, exc) from exc
+
+
+def _retry_attempts() -> int:
+    try:
+        value = int(os.getenv("HYPERFRAMES_RETRY_ATTEMPTS", "3"))
+    except ValueError:
+        value = 3
+    return max(1, min(value, 5))
+
+
+def _retry_base_delay() -> float:
+    try:
+        value = float(os.getenv("HYPERFRAMES_RETRY_BASE_DELAY", "5"))
+    except ValueError:
+        value = 5.0
+    return max(0.0, min(value, 60.0))
+
+
+def _retry_max_delay() -> float:
+    try:
+        value = float(os.getenv("HYPERFRAMES_RETRY_MAX_DELAY", "30"))
+    except ValueError:
+        value = 30.0
+    return max(0.0, min(value, 300.0))
+
+
+def _retry_delay(failed_attempt: int) -> float:
+    exponential = min(_retry_base_delay() * (2 ** max(0, failed_attempt - 1)), _retry_max_delay())
+    return round(exponential + random.uniform(0.0, min(1.0, exponential / 5 if exponential else 0.0)), 2)
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """Retry only connection/timeouts and explicitly temporary HTTP failures."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(
+            current,
+            (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+                ConnectionResetError,
+                TimeoutError,
+            ),
+        ):
+            return True
+
+        response = getattr(current, "response", None)
+        if response is not None and getattr(response, "status_code", None) in TRANSIENT_HTTP_STATUS_CODES:
+            return True
+
+        # tts_google.py exposes HTTP failures as RuntimeError text rather than
+        # requests.HTTPError, so classify only its explicit status code form.
+        match = re.search(r"Google TTS failed(?: for '[^']*')?:\s*(\d{3})\b", str(current))
+        if match and int(match.group(1)) in TRANSIENT_HTTP_STATUS_CODES:
+            return True
+
+        current = getattr(current, "cause", None) or current.__cause__ or current.__context__
+    return False
 
 
 def repo_root() -> Path:
@@ -522,7 +604,10 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
         + " | ".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
     )
 
-    image_path = download_image(image_url, work_dir / "source_image")
+    image_path = _run_stage(
+        "image_download",
+        lambda: download_image(image_url, work_dir / "source_image"),
+    )
     target_mode = os.getenv("TEACHERRYAN_ARROW_TARGET_MODE", "ocr").strip().lower()
     if target_mode == "fixed":
         item_targets = _teacher_ryan_fixed_targets(items)
@@ -530,26 +615,28 @@ def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:
     else:
         item_targets = _teacher_ryan_ocr_hybrid_targets(image_path, items)
 
-    item_audio_paths, cta_audio_path = _synthesize_teacher_ryan_audios(
-        items,
-        "",
-        work_dir / "item_audio",
+    item_audio_paths, cta_audio_path = _run_stage(
+        "tts",
+        lambda: _synthesize_teacher_ryan_audios(items, "", work_dir / "item_audio"),
     )
     for item in items:
         require_file_created(str(item_audio_paths[item]), f"TTS audio for {item}")
     if cta_audio_path is not None:
         require_file_created(str(cta_audio_path), "TTS audio for TeacherRyan CTA")
 
-    video_path = render_teacher_ryan_video(
-        image_path=image_path,
-        item_audio_paths=item_audio_paths,
-        output_path=work_dir / _output_name(row),
-        frames_dir=work_dir / "frames",
-        items=items,
-        item_targets=item_targets,
-        cta_audio_path=cta_audio_path,
-        cta_text=cta,
-        include_cta=False,
+    video_path = _run_stage(
+        "video_render",
+        lambda: render_teacher_ryan_video(
+            image_path=image_path,
+            item_audio_paths=item_audio_paths,
+            output_path=work_dir / _output_name(row),
+            frames_dir=work_dir / "frames",
+            items=items,
+            item_targets=item_targets,
+            cta_audio_path=cta_audio_path,
+            cta_text=cta,
+            include_cta=False,
+        ),
     )
     require_file_created(str(video_path), "TeacherRyan HyperFrames video")
     return video_path
@@ -566,24 +653,33 @@ def _render_oliviaa(row: dict, work_dir: Path) -> Path:
     require_non_empty(prompt_1, "Prompt 1")
 
     dialogue = parse_dialogue_script(script, require_cta=False)
-    image_path = download_image(image_url, work_dir / "source_image")
-    line_audio_paths, cta_audio_path = _synthesize_oliviaa_dialogue_audios(
-        dialogue.lines,
-        "",
-        work_dir / "dialogue_audio",
-        speakers=dialogue.speakers,
+    image_path = _run_stage(
+        "image_download",
+        lambda: download_image(image_url, work_dir / "source_image"),
+    )
+    line_audio_paths, cta_audio_path = _run_stage(
+        "tts",
+        lambda: _synthesize_oliviaa_dialogue_audios(
+            dialogue.lines,
+            "",
+            work_dir / "dialogue_audio",
+            speakers=dialogue.speakers,
+        ),
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for Oliviaa line {index}")
     cta_audio_path = None
 
-    video_path = render_oliviaa_drama_video(
-        image_path=image_path,
-        output_path=work_dir / _output_name(row),
-        frames_dir=work_dir / "frames",
-        dialogue=dialogue,
-        line_audio_paths=line_audio_paths,
-        cta_audio_path=cta_audio_path,
+    video_path = _run_stage(
+        "video_render",
+        lambda: render_oliviaa_drama_video(
+            image_path=image_path,
+            output_path=work_dir / _output_name(row),
+            frames_dir=work_dir / "frames",
+            dialogue=dialogue,
+            line_audio_paths=line_audio_paths,
+            cta_audio_path=cta_audio_path,
+        ),
     )
     require_file_created(str(video_path), "Oliviaa HyperFrames video")
     return video_path
@@ -605,24 +701,33 @@ def _render_thefluentbuild(row: dict, work_dir: Path) -> Path:
             dialogue,
             speakers=["learner" if index % 2 == 0 else "grandma" for index in range(len(dialogue.lines))],
         )
-    image_path = download_image(image_url, work_dir / "source_image")
-    line_audio_paths, cta_audio_path = _synthesize_thefluentbuild_dialogue_audios(
-        dialogue.lines,
-        "",
-        work_dir / "thefluentbuild_audio",
-        speakers=dialogue.speakers,
+    image_path = _run_stage(
+        "image_download",
+        lambda: download_image(image_url, work_dir / "source_image"),
+    )
+    line_audio_paths, cta_audio_path = _run_stage(
+        "tts",
+        lambda: _synthesize_thefluentbuild_dialogue_audios(
+            dialogue.lines,
+            "",
+            work_dir / "thefluentbuild_audio",
+            speakers=dialogue.speakers,
+        ),
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for TheFluentBuild line {index}")
     cta_audio_path = None
 
-    video_path = render_thefluentbuild_grandma_video(
-        image_path=image_path,
-        output_path=work_dir / _output_name(row),
-        frames_dir=work_dir / "frames",
-        dialogue=dialogue,
-        line_audio_paths=line_audio_paths,
-        cta_audio_path=cta_audio_path,
+    video_path = _run_stage(
+        "video_render",
+        lambda: render_thefluentbuild_grandma_video(
+            image_path=image_path,
+            output_path=work_dir / _output_name(row),
+            frames_dir=work_dir / "frames",
+            dialogue=dialogue,
+            line_audio_paths=line_audio_paths,
+            cta_audio_path=cta_audio_path,
+        ),
     )
     require_file_created(str(video_path), "TheFluentBuild HyperFrames video")
     return video_path
@@ -639,20 +744,26 @@ def _render_cindy(row: dict, work_dir: Path) -> Path:
     require_non_empty(prompt_1, "Prompt 1")
 
     podcast = parse_podcast_script(script)
-    image_path = download_image(image_url, work_dir / "source_image")
-    line_audio_paths = _synthesize_cindy_podcast_audios(
-        podcast.lines,
-        work_dir / "cindy_audio",
+    image_path = _run_stage(
+        "image_download",
+        lambda: download_image(image_url, work_dir / "source_image"),
+    )
+    line_audio_paths = _run_stage(
+        "tts",
+        lambda: _synthesize_cindy_podcast_audios(podcast.lines, work_dir / "cindy_audio"),
     )
     for index, audio_path in enumerate(line_audio_paths, start=1):
         require_file_created(str(audio_path), f"TTS audio for Cindy podcast line {index}")
 
-    video_path = render_cindy_podcast_video(
-        image_path=image_path,
-        output_path=work_dir / _output_name(row),
-        frames_dir=work_dir / "frames",
-        podcast=podcast,
-        line_audio_paths=line_audio_paths,
+    video_path = _run_stage(
+        "video_render",
+        lambda: render_cindy_podcast_video(
+            image_path=image_path,
+            output_path=work_dir / _output_name(row),
+            frames_dir=work_dir / "frames",
+            podcast=podcast,
+            line_audio_paths=line_audio_paths,
+        ),
     )
     require_file_created(str(video_path), "Cindy HyperFrames podcast video")
     return video_path
@@ -671,11 +782,44 @@ def _render_row(row: dict, work_dir: Path) -> Path:
     raise SafetyError(f"Unsupported HyperFrames avatar: {avatar}")
 
 
+def _render_row_with_retry(row: dict) -> tuple[Path, Path]:
+    """Retry only the render phase so finalization/publication stays single-shot."""
+    attempts = _retry_attempts()
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        work_dir = Path(tempfile.mkdtemp(prefix="hyperframes_"))
+        try:
+            print(f"HyperFrames render attempt {attempt}/{attempts} for {row.get('id')}.")
+            return _render_row(row, work_dir), work_dir
+        except Exception as exc:
+            last_error = exc
+            shutil.rmtree(work_dir, ignore_errors=True)
+            if not _is_transient_error(exc) or attempt >= attempts:
+                if _is_transient_error(exc):
+                    print(
+                        f"HYPERFRAMES_RETRY_EXHAUSTED page_id={row.get('id')} "
+                        f"stage={getattr(exc, 'stage', 'unknown')} attempts={attempt}",
+                        file=sys.stderr,
+                    )
+                raise
+
+            delay = _retry_delay(attempt)
+            print(
+                f"HYPERFRAMES_TRANSIENT_FAILURE page_id={row.get('id')} "
+                f"stage={getattr(exc, 'stage', 'unknown')} attempt={attempt}/{attempts} "
+                f"error={exc}; retrying_in={delay}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+    raise RuntimeError(f"HyperFrames render failed without an exception for {row.get('id')}") from last_error
+
+
 def _execute_row(row: dict) -> bool:
     _print_row_summary(row)
-    work_dir = Path(tempfile.mkdtemp(prefix="hyperframes_"))
+    video_path, work_dir = _render_row_with_retry(row)
     try:
-        video_path = _render_row(row, work_dir)
         avatar = prop_text(row.get("properties", {}), "Avatar")
         outro_enabled = os.getenv("HYPERFRAMES_OUTRO_ENABLED", "1").strip().lower() not in {
             "0",

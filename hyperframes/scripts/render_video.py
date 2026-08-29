@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import subprocess
 import wave
@@ -37,8 +38,16 @@ def _drive_download_url(url: str) -> str:
     return url
 
 
+def _image_download_timeout() -> tuple[float, float]:
+    try:
+        read_timeout = float(os.getenv("HYPERFRAMES_IMAGE_READ_TIMEOUT", "90"))
+    except ValueError:
+        read_timeout = 90.0
+    return 10.0, max(10.0, min(read_timeout, 300.0))
+
+
 def download_image(image_url: str, output_path: Path) -> Path:
-    response = requests.get(_drive_download_url(image_url), timeout=90)
+    response = requests.get(_drive_download_url(image_url), timeout=_image_download_timeout())
     response.raise_for_status()
     output_path.write_bytes(response.content)
     return output_path
