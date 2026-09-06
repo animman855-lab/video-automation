@@ -7,7 +7,8 @@ import numpy as np
 import soundfile as sf
 
 
-KOKORO_TEACHERRYAN_VOICE = "am_santa"
+# TeacherRyan intentionally shares Oliviaa's male voice for consistency.
+KOKORO_TEACHERRYAN_VOICE = "bm_daniel"
 KOKORO_OLIVIAA_VOICE = "bf_emma"
 KOKORO_OLIVIAA_MALE_VOICE = "bm_daniel"
 KOKORO_THEFLUENTBUILD_GRANDMA_VOICE = "af_aoede"
@@ -48,9 +49,9 @@ def _synthesize_to_wav(
 
 def synthesize_teacher_ryan_audios_kokoro(
     words: list[str],
-    cta: str,
+    cta: str | None,
     output_dir: Path,
-) -> tuple[dict[str, Path], Path]:
+) -> tuple[dict[str, Path], Path | None]:
     if not words:
         raise RuntimeError("Refusing to synthesize an empty TeacherRyan word list with Kokoro.")
 
@@ -64,8 +65,10 @@ def synthesize_teacher_ryan_audios_kokoro(
         output_path = output_dir / _safe_audio_name(index, word)
         audio_paths[word] = _synthesize_to_wav(pipeline, word, output_path)
 
-    cta_path = output_dir / "cta.wav"
-    _synthesize_to_wav(pipeline, cta, cta_path)
+    cta_path = None
+    if cta:
+        cta_path = output_dir / "cta.wav"
+        _synthesize_to_wav(pipeline, cta, cta_path)
     return audio_paths, cta_path
 
 

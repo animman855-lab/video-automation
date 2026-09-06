@@ -54,9 +54,6 @@ from tts_google import (
     check_tts_secrets,
     _smooth_spoken_text,
     _synthesize_text,
-    synthesize_cindy_podcast_audios as synthesize_cindy_podcast_audios_google,
-    synthesize_teacher_ryan_audios,
-    synthesize_thefluentbuild_audios as synthesize_thefluentbuild_audios_google,
 )
 
 try:
@@ -78,7 +75,7 @@ except Exception as exc:
     KOKORO_CINDY_VOICE = "af_jessica"
     KOKORO_OLIVIAA_MALE_VOICE = "bm_daniel"
     KOKORO_OLIVIAA_VOICE = "bf_emma"
-    KOKORO_TEACHERRYAN_VOICE = "am_echo"
+    KOKORO_TEACHERRYAN_VOICE = "bm_daniel"
     KOKORO_THEFLUENTBUILD_GRANDMA_VOICE = "af_aoede"
     KOKORO_THEFLUENTBUILD_LEARNER_VOICE = "am_echo"
     synthesize_teacher_ryan_audios_kokoro = None
@@ -404,9 +401,11 @@ def _synthesize_teacher_ryan_audios(
     items: list[str],
     cta: str,
     output_dir: Path,
-) -> tuple[dict[str, Path], Path]:
-    print("TeacherRyan TTS provider: Google TTS")
-    return synthesize_teacher_ryan_audios(items, cta, output_dir / "google")
+) -> tuple[dict[str, Path], Path | None]:
+    if synthesize_teacher_ryan_audios_kokoro is None:
+        raise RuntimeError(f"TeacherRyan Kokoro is unavailable: {KOKORO_IMPORT_ERROR}")
+    print(f"TeacherRyan TTS provider: Kokoro {KOKORO_TEACHERRYAN_VOICE}")
+    return synthesize_teacher_ryan_audios_kokoro(items, cta, output_dir / "kokoro")
 
 
 def _kokoro_pipeline():
@@ -557,31 +556,74 @@ def _synthesize_thefluentbuild_dialogue_audios(
     output_dir: Path,
     speakers: list[str] | None = None,
 ) -> tuple[list[Path], Path | None]:
-    print("TheFluentBuild TTS provider: Google TTS")
-    if not cta:
-        if not lines:
-            raise RuntimeError("Refusing to synthesize an empty TheFluentBuild dialogue.")
-        output_dir = output_dir / "google"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        token = _access_token()
-        line_paths: list[Path] = []
-        speakers = speakers or []
-        for index, line in enumerate(lines, start=1):
-            speaker = speakers[index - 1] if index - 1 < len(speakers) else ("grandma" if index % 2 == 0 else "learner")
-            is_grandma = speaker == "grandma"
-            voice = "en-US-Neural2-F" if is_grandma else "en-US-Neural2-C"
-            rate = 0.9 if is_grandma else 0.94
-            output_path = output_dir / f"line_{index:02d}.mp3"
-            line_paths.append(
-                _synthesize_text(_smooth_spoken_text(line), output_path, token, voice_name=voice, speaking_rate=rate)
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty TheFluentBuild dialogue.")
+    pipeline = _kokoro_pipeline()
+    output_dir = output_dir / "kokoro"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    speakers = speakers or []
+    line_paths: list[Path] = []
+
+    print(
+        "TheFluentBuild TTS provider: Kokoro "
+        f"({KOKORO_THEFLUENTBUILD_GRANDMA_VOICE}/{KOKORO_THEFLUENTBUILD_LEARNER_VOICE})"
+    )
+    for index, line in enumerate(lines, start=1):
+        speaker = speakers[index - 1] if index - 1 < len(speakers) else (
+            "grandma" if index % 2 == 0 else "learner"
+        )
+        voice = (
+            KOKORO_THEFLUENTBUILD_GRANDMA_VOICE
+            if speaker == "grandma"
+            else KOKORO_THEFLUENTBUILD_LEARNER_VOICE
+        )
+        output_path = output_dir / f"line_{index:02d}.wav"
+        line_paths.append(
+            synthesize_text_kokoro(
+                _smooth_spoken_text(line), output_path, voice, pipeline=pipeline
             )
-        return line_paths, None
-    return synthesize_thefluentbuild_audios_google(lines, cta, output_dir / "google", speakers=speakers)
+        )
+
+    cta_path = None
+    if cta:
+        cta_path = synthesize_text_kokoro(
+            _smooth_spoken_text(cta),
+            output_dir / "cta.wav",
+            KOKORO_THEFLUENTBUILD_GRANDMA_VOICE,
+            pipeline=pipeline,
+        )
+    return line_paths, cta_path
 
 
 def _synthesize_cindy_podcast_audios(lines: list, output_dir: Path) -> list[Path]:
-    print("Cindy TTS provider: Google TTS")
-    return synthesize_cindy_podcast_audios_google(lines, output_dir / "google")
+    if not lines:
+        raise RuntimeError("Refusing to synthesize an empty Cindy podcast.")
+    pipeline = _kokoro_pipeline()
+    output_dir = output_dir / "kokoro"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(
+        "Cindy TTS provider: Kokoro "
+        f"({KOKORO_CINDY_VOICE}/{KOKORO_CINDY_GUEST_VOICE})"
+    )
+
+    line_paths: list[Path] = []
+    for index, line in enumerate(lines, start=1):
+        speaker = getattr(line, "speaker", "").lower()
+        text = getattr(line, "text", "")
+        if not text:
+            raise RuntimeError(f"Missing Cindy podcast text for line {index}.")
+        voice = (
+            KOKORO_CINDY_VOICE
+            if speaker in {"cindy", "host", "speakera"}
+            else KOKORO_CINDY_GUEST_VOICE
+        )
+        output_path = output_dir / f"line_{index:02d}.wav"
+        line_paths.append(
+            synthesize_text_kokoro(
+                _smooth_spoken_text(text), output_path, voice, pipeline=pipeline
+            )
+        )
+    return line_paths
 
 
 def _render_teacher_ryan(row: dict, work_dir: Path) -> Path:

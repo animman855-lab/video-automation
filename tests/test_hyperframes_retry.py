@@ -15,6 +15,51 @@ import run_pilot
 
 
 class HyperFramesRetryTests(unittest.TestCase):
+    def test_non_oliviaa_avatar_voice_mappings_are_local_kokoro(self):
+        output_dir = Path("test-output")
+        with patch.object(run_pilot, "_kokoro_pipeline", return_value=object()), patch.object(
+            run_pilot, "synthesize_text_kokoro", side_effect=lambda text, path, voice, pipeline=None: path
+        ) as synthesize:
+            fluent_paths, fluent_cta = run_pilot._synthesize_thefluentbuild_dialogue_audios(
+                ["learner line", "grandma line"], "", output_dir, speakers=["male", "grandma"]
+            )
+            cindy_lines = [
+                type("Line", (), {"speaker": "cindy", "text": "host line"})(),
+                type("Line", (), {"speaker": "guest", "text": "guest line"})(),
+            ]
+            cindy_paths = run_pilot._synthesize_cindy_podcast_audios(cindy_lines, output_dir)
+
+        self.assertIsNone(fluent_cta)
+        self.assertEqual(len(fluent_paths), 2)
+        self.assertEqual(len(cindy_paths), 2)
+        voices = [call.args[2] for call in synthesize.call_args_list]
+        self.assertEqual(
+            voices,
+            [
+                run_pilot.KOKORO_THEFLUENTBUILD_LEARNER_VOICE,
+                run_pilot.KOKORO_THEFLUENTBUILD_GRANDMA_VOICE,
+                run_pilot.KOKORO_CINDY_VOICE,
+                run_pilot.KOKORO_CINDY_GUEST_VOICE,
+            ],
+        )
+
+    def test_teacher_ryan_uses_oliviaa_male_kokoro_voice_path(self):
+        with patch.object(
+            run_pilot,
+            "synthesize_teacher_ryan_audios_kokoro",
+            return_value=({"hello": Path("hello.wav")}, None),
+        ) as synthesize:
+            result = run_pilot._synthesize_teacher_ryan_audios(
+                ["hello"], "", Path("test-output")
+            )
+
+        self.assertEqual(result, ({"hello": Path("hello.wav")}, None))
+        synthesize.assert_called_once_with(["hello"], "", Path("test-output") / "kokoro")
+        self.assertEqual(
+            run_pilot.KOKORO_TEACHERRYAN_VOICE,
+            run_pilot.KOKORO_OLIVIAA_MALE_VOICE,
+        )
+
     def test_transient_errors_are_retryable_but_auth_errors_are_not(self):
         self.assertTrue(run_pilot._is_transient_error(requests.ConnectionError("connection reset")))
         self.assertTrue(run_pilot._is_transient_error(requests.Timeout("read timeout")))
