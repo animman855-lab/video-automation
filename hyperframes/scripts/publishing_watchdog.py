@@ -28,6 +28,8 @@ NORMAL_VIDEO_AVATARS = {"oliviaa", "oliviaaa", "cindy", "teacherryan", "thefluen
 NORMAL_VIDEO_SLOTS = ["08:00", "16:00"]
 KAYLA_AD_SLOTS = ["00:00", "08:00", "12:00", "16:00", "20:00"]
 DIRECT_LOCAL_VIDEO_AVATARS = NORMAL_VIDEO_AVATARS | {"kayla"}
+DRIVE_LINK_TIMEOUT = (10, 30)
+VALID_VIDEO_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
 
 
 def repo_root() -> Path:
@@ -66,6 +68,45 @@ def prop_multi_select(props: dict, name: str) -> list[str]:
     if not prop or prop.get("type") != "multi_select":
         return []
     return [item.get("name", "") for item in prop.get("multi_select", []) if item.get("name")]
+
+
+def inspect_video_link(video_url: str) -> str:
+    """Validate a Drive link without downloading the full video."""
+    if not video_url:
+        return "missing"
+
+    import re
+
+    match = re.search(r"(?:/d/|id=)([A-Za-z0-9_-]+)", video_url)
+    if not match:
+        return "invalid_format"
+
+    file_id = match.group(1)
+    download_url = (
+        "https://drive.usercontent.google.com/download?"
+        f"id={file_id}&export=download&authuser=0&confirm=t"
+    )
+    try:
+        response = requests.get(download_url, stream=True, timeout=DRIVE_LINK_TIMEOUT)
+    except requests.RequestException:
+        return "unreachable"
+
+    try:
+        if response.status_code >= 400:
+            return f"http_{response.status_code}"
+        content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if "text/html" in content_type:
+            return "html_permission_or_confirmation_page"
+        if not (content_type.startswith("video/") or content_type in VALID_VIDEO_CONTENT_TYPES):
+            return f"content_type_{content_type or 'unknown'}"
+        first_chunk = next(response.iter_content(chunk_size=32768), b"")
+        if b"ftyp" not in first_chunk[:65536]:
+            return "invalid_mp4_payload"
+        return "valid"
+    except requests.RequestException:
+        return "unreachable"
+    finally:
+        response.close()
 
 
 def query_rows_for_date(publication_date: str) -> list[dict]:
@@ -201,7 +242,7 @@ def row_summary(row: dict, now: datetime) -> dict:
     script = prop_text(props, "Script")
     platforms = prop_multi_select(props, "Plateforme")
     due = slot_has_started(publication_date, slot, now)
-    uses_direct_local_video = avatar in DIRECT_LOCAL_VIDEO_AVATARS
+    uses_direct_local_video = video_type == "HyperFrames" and avatar in DIRECT_LOCAL_VIDEO_AVATARS
 
     issues: list[str] = []
     notes: list[str] = []
@@ -218,7 +259,7 @@ def row_summary(row: dict, now: datetime) -> dict:
             if uses_direct_local_video:
                 issues.append("A publier apres le debut du slot: publication directe ou artifact a verifier.")
             else:
-                issues.append("A publier mais Lien Video vide apres le debut du slot: publication impossible.")
+                issues.append("Lien Video manquant apres le debut du slot: publication impossible.")
         elif not lien_video:
             if uses_direct_local_video:
                 notes.append("A publier pour publication directe quand le slot arrive.")
@@ -227,7 +268,11 @@ def row_summary(row: dict, now: datetime) -> dict:
         if not platforms:
             issues.append("A publier mais Plateforme vide: aucun réseau ne sera ciblé.")
         if due and lien_video and platforms:
-            issues.append("A publier avec video et plateformes apres le debut du slot: verifier si le workflow de publication a tourne.")
+            link_state = inspect_video_link(lien_video)
+            if link_state != "valid":
+                issues.append(f"Lien Video invalide ({link_state}): corriger le lien ou ses permissions.")
+            else:
+                issues.append("A publier avec video et plateformes apres le debut du slot: verifier si le workflow de publication a tourne.")
         if not due:
             notes.append("Pret mais slot pas encore arrive.")
     elif status == "En cours":

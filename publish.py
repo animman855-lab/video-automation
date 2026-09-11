@@ -63,6 +63,12 @@ PINTEREST_BOARDS = {
 }
 
 MIN_SUCCESSFUL_PLATFORMS = 2
+VIDEO_DOWNLOAD_TIMEOUT = (15, 90)
+VIDEO_MIN_BYTES = 1024
+ALLOWED_VIDEO_CONTENT_TYPES = {
+    "application/octet-stream",
+    "binary/octet-stream",
+}
 
 YOUTUBE_HASHTAGS = [
     "#englishmastery",
@@ -295,23 +301,83 @@ def get_drive_file_id(drive_url):
     raise ValueError(f"Cannot extract file ID from: {drive_url}")
 
 
+class VideoDownloadError(RuntimeError):
+    """A row-level video download failure that must not abort the batch."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def validate_video_payload(content_type, first_chunk):
+    content_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if "text/html" in content_type:
+        raise VideoDownloadError(
+            "invalid_video_link_html",
+            "Google Drive returned HTML instead of a video file",
+        )
+
+    is_video_type = content_type.startswith("video/") or content_type in ALLOWED_VIDEO_CONTENT_TYPES
+    if not is_video_type:
+        raise VideoDownloadError(
+            "invalid_video_content_type",
+            f"Unexpected video content type: {content_type or 'unknown'}",
+        )
+
+    if b"ftyp" not in (first_chunk or b"")[:65536]:
+        raise VideoDownloadError(
+            "invalid_video_payload",
+            "Downloaded content is not a recognizable MP4 payload",
+        )
+
+
 def download_video(drive_url):
-    file_id = get_drive_file_id(drive_url)
+    try:
+        file_id = get_drive_file_id(drive_url)
+    except ValueError as exc:
+        raise VideoDownloadError("invalid_video_link_format", str(exc)) from exc
     print(f"  File ID: {file_id}")
     session = requests.Session()
     download_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0&confirm=t"
-    response = session.get(download_url, stream=True, timeout=90)
+    try:
+        response = session.get(download_url, stream=True, timeout=VIDEO_DOWNLOAD_TIMEOUT)
+    except requests.RequestException as exc:
+        raise VideoDownloadError("video_download_failed", f"Video download failed: {exc}") from exc
     print(f"  Download status: {response.status_code}")
     print(f"  Content-Type: {response.headers.get('Content-Type', 'unknown')}")
-    response.raise_for_status()
-    if "text/html" in response.headers.get("Content-Type", "").lower():
-        raise RuntimeError("Google Drive returned HTML instead of a video file")
+    try:
+        response.raise_for_status()
+        chunks = response.iter_content(chunk_size=32768)
+        first_chunk = next(chunks, b"")
+        validate_video_payload(response.headers.get("Content-Type", ""), first_chunk)
+    except VideoDownloadError:
+        response.close()
+        raise
+    except requests.RequestException as exc:
+        response.close()
+        raise VideoDownloadError("video_download_failed", f"Video download failed: {exc}") from exc
+
     tmp_path = f"/tmp/video_{file_id}.mp4"
-    with open(tmp_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=32768):
-            if chunk:
-                f.write(chunk)
-    size = os.path.getsize(tmp_path)
+    try:
+        with open(tmp_path, "wb") as f:
+            if first_chunk:
+                f.write(first_chunk)
+            for chunk in chunks:
+                if chunk:
+                    f.write(chunk)
+        size = os.path.getsize(tmp_path)
+    except (OSError, requests.RequestException) as exc:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise VideoDownloadError("video_download_failed", f"Could not save downloaded video: {exc}") from exc
+    finally:
+        response.close()
+
+    if size < VIDEO_MIN_BYTES:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise VideoDownloadError("invalid_video_payload", f"Downloaded video is too small: {size} bytes")
+
     print(f"  Video downloaded: {tmp_path} ({size} bytes)")
     return tmp_path
 
@@ -480,7 +546,7 @@ def main():
             video_source = "drive"
             print("  Video source: Lien Video")
         else:
-            print("  No local MP4 and no video link - skipping.")
+            print("  PUBLISH ISSUE: missing_video_link - no local MP4 and no video link; skipping row.")
             continue
 
         if not script:
@@ -495,7 +561,11 @@ def main():
             video_path = str(local_video)
         else:
             print("  Downloading video...")
-            video_path = download_video(lien_video)
+            try:
+                video_path = download_video(lien_video)
+            except VideoDownloadError as exc:
+                print(f"  PUBLISH ISSUE: {exc.code} - {exc}. Notion remains A publier; continuing with next row.")
+                continue
             delete_video_after = True
 
         successes = 0
