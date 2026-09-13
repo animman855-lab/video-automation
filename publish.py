@@ -7,6 +7,13 @@ import pytz
 
 from metadata_provider import deterministic_metadata, request_metadata
 from hashtag_utils import final_hashtags, prepare_video_metadata, validate_prepared_metadata
+from profile_config import get_profile_config
+from publication_report import (
+    append_publication_report,
+    final_status_for_successes,
+    result_details,
+    sanitize_error,
+)
 
 from publish_timing import (
     claim_slot,
@@ -62,7 +69,6 @@ PINTEREST_BOARDS = {
     "kayla": "1108800439448657323",
 }
 
-MIN_SUCCESSFUL_PLATFORMS = 2
 VIDEO_DOWNLOAD_TIMEOUT = (15, 90)
 VIDEO_MIN_BYTES = 1024
 ALLOWED_VIDEO_CONTENT_TYPES = {
@@ -80,6 +86,8 @@ YOUTUBE_HASHTAGS = [
     "#englishspeaking",
 ]
 
+# Kayla remains on its dedicated manual publisher to preserve the existing
+# workflow boundary. HyperFrames are legacy-only and excluded below.
 SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW = {"kayla"}
 
 
@@ -131,17 +139,22 @@ def select_due_slot_group(videos, now):
     candidates = []
     for video in videos:
         props = video["properties"]
+        status = props["Statut"]["select"]["name"] if props["Statut"]["select"] else ""
+        if status != "A publier":
+            continue
         avatar = props["Avatar"]["select"]["name"].lower() if props["Avatar"]["select"] else ""
         if avatar in SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW:
+            continue
+        video_type = props["Video Type"]["select"]["name"] if props["Video Type"]["select"] else ""
+        if video_type.lower() == "hyperframes":
             continue
         publication_date = props["Date Publication"]["date"]["start"] if props["Date Publication"]["date"] else ""
         slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
         script = props["Script"]["rich_text"]
         lien_video = props["Lien Video"]["url"] if props["Lien Video"]["url"] else ""
-        local_video = local_hyperframes_video_path(video)
         if not slot_is_due(slot, publication_date, now):
             continue
-        if not script or not (local_video.exists() or lien_video):
+        if not script or not lien_video:
             continue
         candidates.append((slot_sort_value(publication_date, slot), slot_key(publication_date, slot)))
 
@@ -152,6 +165,15 @@ def select_due_slot_group(videos, now):
     selected = []
     for video in videos:
         props = video["properties"]
+        status = props["Statut"]["select"]["name"] if props["Statut"]["select"] else ""
+        if status != "A publier":
+            continue
+        avatar = props["Avatar"]["select"]["name"].lower() if props["Avatar"]["select"] else ""
+        if avatar in SKIP_AVATARS_IN_MAIN_VIDEO_WORKFLOW:
+            continue
+        video_type = props["Video Type"]["select"]["name"] if props["Video Type"]["select"] else ""
+        if video_type.lower() == "hyperframes":
+            continue
         publication_date = props["Date Publication"]["date"]["start"] if props["Date Publication"]["date"] else ""
         slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
         if slot_key(publication_date, slot) == selected_key:
@@ -163,15 +185,27 @@ def get_youtube_hashtag(index):
     return YOUTUBE_HASHTAGS[index % len(YOUTUBE_HASHTAGS)]
 
 
-def generate_metadata(script, avatar, plateformes, video_index=0):
+def generate_metadata(script, avatar, plateformes, video_index=0, source_title=""):
     avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), f"#{avatar.lower()}")
     youtube_hashtag = get_youtube_hashtag(video_index)
     context = AVATAR_CONTEXT.get(avatar.lower(), "an English teacher")
+    profile_config = get_profile_config(avatar)
+    localization_instruction = profile_config["metadata_instruction"]
+    localized_cta = profile_config["cta"]
     platforms_str = ", ".join(plateformes)
 
     prompt = f"""You are a social media expert creating content for {context}
 
 Based on the video script below, generate optimized content for these platforms: {platforms_str}
+
+PROFILE LOCALIZATION:
+- Target market: {profile_config['market']}
+- Audience: {profile_config['audience']}
+- Metadata language: {profile_config['metadata_language']}
+- {localization_instruction}
+- Use this market CTA when a CTA is needed: {localized_cta}
+- Do not invent a source, creative family, variation, or relationship that is not present in the input.
+- Make the wording natural and distinct from generic metadata. Avoid repeating the same opening pattern.
 
 MANDATORY HASHTAGS — must appear in ALL platforms: #learnenglish #englishvocabulary #englishspeakingpractice #english
 These 4 hashtags are REQUIRED on every platform without exception. Add topic-specific hashtags on top.
@@ -245,7 +279,7 @@ DESCRIPTION rules:
 - Hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english {avatar_hashtag} + 3-5 topic hashtags
 - STRICT max 480 characters total including hashtags — NEVER exceed
 
-Write everything in English.
+Use the profile localization rules above. English must remain visible for the English phrases being taught.
 Only generate sections for platforms in: {platforms_str}
 
 Respond ONLY in this exact format:
@@ -261,7 +295,10 @@ PINTEREST_TITLE: [title here]
 PINTEREST_DESCRIPTION: [description here]
 
 SCRIPT:
-{script}"""
+{script}
+
+NOTION TITLE CONTEXT:
+{source_title}"""
 
     required_keys = [
         f"{platform.upper()}_{suffix}"
@@ -276,6 +313,7 @@ SCRIPT:
         avatar_hashtag,
         "#englishlesson",
         "#esl",
+        *profile_config.get("localized_hashtags", []),
     ]
     return request_metadata(
         prompt,
@@ -286,6 +324,8 @@ SCRIPT:
             plateformes,
             fallback_hashtags,
             youtube_hashtags=[youtube_hashtag],
+            source_title=source_title,
+            profile_config=profile_config,
         ),
         label="main publisher",
     )
@@ -487,12 +527,66 @@ def upload_result_succeeded(result, platform_key):
     return result.get("success") is True
 
 
-def mark_as_published(page_id):
+def publish_video_to_platforms(video_path, metadata, avatar, platforms, notion_title):
+    """Attempt each platform independently and preserve every outcome."""
+
+    successes = 0
+    failures = 0
+    outcomes = {}
+    for platform in platforms:
+        platform_upper = platform.upper()
+        title = metadata.get(f"{platform_upper}_TITLE", "") or metadata.get("YOUTUBE_TITLE", notion_title)
+        description = metadata.get(f"{platform_upper}_DESCRIPTION", "") or metadata.get("YOUTUBE_DESCRIPTION", "")
+        title, description = prepare_video_metadata(title, description, avatar, platform)
+
+        print(f"\n  [{platform}]")
+        print(f"  Title: {title[:80]}")
+        print(f"  Description: {description[:100]}...")
+
+        try:
+            result = publish_video(video_path, title, description, avatar, platform)
+        except requests.RequestException as exc:
+            failures += 1
+            error = sanitize_error(exc)
+            outcomes[platform] = {"success": False, "error_type": type(exc).__name__, "error": error}
+            print(f"  Upload exception on {platform}: {type(exc).__name__}: {error}")
+            continue
+        except Exception as exc:
+            failures += 1
+            error = sanitize_error(exc)
+            outcomes[platform] = {"success": False, "error_type": type(exc).__name__, "error": error}
+            print(f"  Unexpected upload exception on {platform}: {type(exc).__name__}: {error}")
+            continue
+
+        if not isinstance(result, dict):
+            failures += 1
+            outcomes[platform] = {"success": False, "error_type": "invalid_upload_response", "error": "non-object response"}
+            print(f"  Invalid upload response on {platform}")
+            continue
+
+        platform_key = platform.lower()
+        if not upload_result_succeeded(result, platform_key):
+            failures += 1
+            outcomes[platform] = result_details(result, platform_key, False)
+            print(f"  Failed on {platform}")
+        else:
+            successes += 1
+            outcomes[platform] = result_details(result, platform_key, True)
+            print(f"  Succeeded on {platform}")
+
+    return successes, failures, outcomes
+
+
+def set_notion_status(page_id, status):
     url = f"https://api.notion.com/v1/pages/{page_id}"
-    payload = {"properties": {"Statut": {"select": {"name": "Publie"}}}}
+    payload = {"properties": {"Statut": {"select": {"name": status}}}}
     response = requests.patch(url, headers=NOTION_HEADERS, json=payload, timeout=30)
     response.raise_for_status()
-    print("  Notion updated -> Publie")
+    print(f"  Notion updated -> {status}")
+
+
+def mark_as_published(page_id):
+    set_notion_status(page_id, "Publie")
 
 
 def main():
@@ -502,7 +596,7 @@ def main():
 
     videos = get_videos_to_publish()
     print(f"{len(videos)} video(s) found.")
-    print(f"Local HyperFrames output dir: {local_hyperframes_output_dir()}")
+    print("Manual-first video workflow: HyperFrames generation is disabled for new publications.")
 
     videos, selected_key = select_due_slot_group(videos, now)
     if not videos:
@@ -523,6 +617,7 @@ def main():
         titre_notion = props["Titre"]["title"][0]["plain_text"] if props["Titre"]["title"] else "No title"
         script = props["Script"]["rich_text"][0]["plain_text"] if props["Script"]["rich_text"] else ""
         avatar = props["Avatar"]["select"]["name"] if props["Avatar"]["select"] else ""
+        video_type = props["Video Type"]["select"]["name"] if props["Video Type"]["select"] else ""
         lien_video = props["Lien Video"]["url"] if props["Lien Video"]["url"] else ""
         plateformes = [p["name"] for p in props["Plateforme"]["multi_select"]]
         slot = props["Slot"]["select"]["name"] if props["Slot"]["select"] else ""
@@ -534,91 +629,70 @@ def main():
             print(f"  Avatar {avatar} is handled by a dedicated workflow - skipping.")
             continue
 
+        if video_type.lower() == "hyperframes":
+            print("  Legacy HyperFrames row skipped by the manual-first publisher.")
+            continue
+
         if not slot_is_due(slot, publication_date, now):
             print(f"  Slot {slot} not due yet - skipping.")
             continue
 
-        local_video = local_hyperframes_video_path(video)
-        if local_video.exists():
-            video_source = "local"
-            print(f"  Video source: local MP4 ({local_video})")
-        elif lien_video:
-            video_source = "drive"
-            print("  Video source: Lien Video")
-        else:
-            print("  PUBLISH ISSUE: missing_video_link - no local MP4 and no video link; skipping row.")
+        if not lien_video:
+            print("  PUBLISH ISSUE: missing_manual_video_link - no Lien Video; skipping row.")
             continue
+        video_source = "drive"
+        print("  Video source: Lien Video")
 
         if not script:
             print("  No script - skipping.")
             continue
 
         print("  Generating platform-specific content...")
-        metadata = generate_metadata(script, avatar, plateformes, index)
+        metadata = generate_metadata(script, avatar, plateformes, index, titre_notion)
 
-        delete_video_after = False
-        if video_source == "local":
-            video_path = str(local_video)
-        else:
-            print("  Downloading video...")
-            try:
-                video_path = download_video(lien_video)
-            except VideoDownloadError as exc:
-                print(f"  PUBLISH ISSUE: {exc.code} - {exc}. Notion remains A publier; continuing with next row.")
-                continue
-            delete_video_after = True
+        print("  Downloading video...")
+        try:
+            video_path = download_video(lien_video)
+        except VideoDownloadError as exc:
+            print(f"  PUBLISH ISSUE: {exc.code} - {exc}. Notion remains A publier; continuing with next row.")
+            continue
+        delete_video_after = True
 
-        successes = 0
-        failures = 0
-        for platform in plateformes:
-            platform_upper = platform.upper()
-            titre = metadata.get(f"{platform_upper}_TITLE", "")
-            description = metadata.get(f"{platform_upper}_DESCRIPTION", "")
-
-            if not titre:
-                titre = metadata.get("YOUTUBE_TITLE", titre_notion)
-            if not description:
-                description = metadata.get("YOUTUBE_DESCRIPTION", "")
-
-            titre, description = prepare_video_metadata(titre, description, avatar, platform)
-
-            print(f"\n  [{platform}]")
-            print(f"  Title: {titre[:80]}")
-            print(f"  Description: {description[:100]}...")
-
-            try:
-                result = publish_video(video_path, titre, description, avatar, platform)
-            except requests.RequestException as exc:
-                failures += 1
-                print(f"  Upload exception on {platform}: {type(exc).__name__}: {exc}")
-                continue
-            except Exception as exc:
-                failures += 1
-                print(f"  Unexpected upload exception on {platform}: {type(exc).__name__}: {exc}")
-                continue
-
-            if not isinstance(result, dict):
-                failures += 1
-                print(f"  Invalid upload response on {platform}: {result!r}")
-                continue
-
-            platform_key = platform.lower()
-            if not upload_result_succeeded(result, platform_key):
-                failures += 1
-                print(f"  Failed on {platform}")
-            else:
-                successes += 1
+        successes, failures, outcomes = publish_video_to_platforms(
+            video_path,
+            metadata,
+            avatar,
+            plateformes,
+            titre_notion,
+        )
 
         print(f"  Publish result: successes={successes} failures={failures}")
-        required_successes = 1 if len(plateformes) == 1 else MIN_SUCCESSFUL_PLATFORMS
-        print(f"  Required successful platforms: {required_successes}")
-        if successes >= required_successes:
-            if not slot_claimed:
-                claim_slot(selected_key)
-                slot_claimed = True
-            mark_as_published(page_id)
+        final_status, final_reason = final_status_for_successes(successes, len(plateformes))
+        print(f"  Final outcome: {final_status} ({final_reason})")
+        notion_status_error = None
+        if final_status in {"Publie", "Partiel", "Echec"}:
+            try:
+                if not slot_claimed:
+                    claim_slot(selected_key)
+                    slot_claimed = True
+                set_notion_status(page_id, final_status)
+            except Exception as exc:
+                notion_status_error = f"{type(exc).__name__}: {sanitize_error(exc)}"
+                print(f"  Notion status update failed: {notion_status_error}")
         else:
-            print("  Not enough successful platforms - Notion NOT updated")
+            print("  No terminal status computed - Notion NOT updated")
+
+        report_file = append_publication_report(
+            page_id=page_id,
+            avatar=avatar,
+            title=titre_notion,
+            video_type=video_type,
+            requested_platforms=plateformes,
+            outcomes=outcomes,
+            final_status=final_status,
+            notion_status_error=notion_status_error,
+        )
+        print(f"  Publication report: {report_file}")
 
         if delete_video_after:
             os.remove(video_path)

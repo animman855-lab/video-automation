@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from profile_config import get_profile_config
+
 
 CORE_HASHTAGS = [
     "#learnenglish",
@@ -13,10 +15,10 @@ CORE_HASHTAGS = [
 ]
 YOUTUBE_TITLE_HASHTAGS = ["#english", "#learnenglish", "#englishlearning"]
 TIKTOK_HASHTAGS_BY_AVATAR = {
-    "oliviaa": ["#learnenglish", "#reallifeenglish", "#englishspeaking"],
-    "cindy": ["#learnenglish", "#englishlistening", "#englishspeaking"],
+    "cindy": ["#learnenglish", "#تعلم_الانجليزية", "#englishspeaking"],
     "teacherryan": ["#learnenglish", "#englishvocabulary", "#englishpractice"],
-    "thefluentbuild": ["#learnenglish", "#englishgrammar", "#reallifeenglish"],
+    "thefluentbuild": ["#learnenglish", "#aprendeingles", "#englishgrammar"],
+    "oliviaa": ["#learnenglish", "#belajarbahasainggris", "#englishspeaking"],
 }
 
 
@@ -54,6 +56,17 @@ def tiktok_hashtags(avatar: str) -> list[str]:
     return _unique_tags(topic_tags + [_avatar_hashtag(avatar)])
 
 
+def localized_hashtags(avatar: str) -> list[str]:
+    """Return market tags while retaining English-learning discoverability."""
+
+    config = get_profile_config(avatar)
+    return _unique_tags(list(config.get("localized_hashtags", [])))
+
+
+def required_description_hashtags(avatar: str) -> list[str]:
+    return _unique_tags(CORE_HASHTAGS + localized_hashtags(avatar) + [_avatar_hashtag(avatar)])
+
+
 def ensure_description_hashtags(
     description: str,
     avatar: str,
@@ -66,7 +79,7 @@ def ensure_description_hashtags(
     existing = _extract_tags(clean)
     body = re.sub(r"(?<![\w])#[\w]+", "", clean)
     body = re.sub(r"\s+", " ", body).strip()
-    required = _unique_tags(required_tags or (CORE_HASHTAGS + [_avatar_hashtag(avatar)]))
+    required = _unique_tags(required_tags or required_description_hashtags(avatar))
     tags = _unique_tags(required + existing)
     if max_chars is not None:
         extras = [tag for tag in tags if tag.lower() not in {item.lower() for item in required}]
@@ -178,7 +191,7 @@ def validate_prepared_metadata(
         if title_missing:
             raise ValueError(f"YouTube title is missing hashtags: {' '.join(title_missing)}")
 
-    required_description = CORE_HASHTAGS + [_avatar_hashtag(avatar)]
+    required_description = required_description_hashtags(avatar)
     description_lower = (description or "").lower()
     missing = [tag for tag in required_description if tag.lower() not in description_lower]
     if missing:

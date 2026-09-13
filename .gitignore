@@ -8,6 +8,7 @@ __pycache__/
 hyperframes-output/
 kayla-output/
 output/
+publish-report*.jsonl
 content_registry/*.json
 !hyperframes/assets/
 !hyperframes/assets/teacherryan-cta.mp4

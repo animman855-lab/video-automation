@@ -8,6 +8,13 @@ import pytz
 import requests
 from hashtag_utils import title_with_hashtags
 from metadata_provider import deterministic_metadata, request_metadata
+from publication_report import (
+    append_publication_report,
+    final_status_for_successes,
+    result_details,
+    sanitize_error,
+    upload_result_succeeded,
+)
 from publish_timing import queryable_dates, slot_is_due, slot_sort_value
 
 
@@ -19,7 +26,6 @@ EBOOK_LINK = "https://mybook.to/100EnglishMistakes"
 PINTEREST_PROFILE = "thefluentbuild"
 KAYLA_PROFILE = "kayla"
 KAYLA_PINTEREST_BOARD_ID = "1108800439448657323"
-MIN_SUCCESSFUL_PLATFORMS = 2
 REQUIRED_HASHTAGS = [
     "#learnenglish",
     "#englishapp",
@@ -287,7 +293,7 @@ def upload_video(video_path, title, description, platform):
     key = platform_key(platform)
     if not key:
         print(f"  Unknown platform skipped: {platform}")
-        return False
+        return {"success": False, "error_type": "unknown_platform", "error": platform}
 
     if key == "pinterest":
         pinterest_desc = ensure_required_hashtags(description, max_chars=440)
@@ -350,36 +356,44 @@ def upload_video(video_path, title, description, platform):
                 timeout=180,
             )
     except requests.exceptions.RequestException as exc:
-        print(f"  UPLOAD ERROR {platform}: {exc}")
-        return False
+        error = sanitize_error(exc)
+        print(f"  UPLOAD ERROR {platform}: {error}")
+        return {"success": False, "error_type": type(exc).__name__, "error": error}
 
     print(f"  UPLOAD STATUS {platform}: {response.status_code}")
     print(f"  UPLOAD RESPONSE {platform}: {response.text[:200]}")
     if response.status_code >= 400:
-        return False
+        return {
+            "success": False,
+            "status": "failed",
+            "status_code": response.status_code,
+            "message": f"HTTP {response.status_code}",
+        }
     try:
         result = response.json()
     except Exception:
-        return False
-    if result.get("success") is False:
-        return False
+        return {"success": False, "error_type": "invalid_upload_response", "error": "invalid JSON response"}
+    if result.get("success") is False or result.get("status") == "failed":
+        return result
     platform_result = result.get("results", {}).get(key)
-    if isinstance(platform_result, dict) and platform_result.get("success") is False:
-        return False
-    if result.get("status") == "failed":
-        return False
-    return True
+    if isinstance(platform_result, dict) and platform_result.get("success") is not True:
+        return {**result, "status": "failed", "message": platform_result.get("message", "Platform upload failed")}
+    return result
 
 
-def mark_as_published(page_id):
+def set_notion_status(page_id, status):
     response = requests.patch(
         f"https://api.notion.com/v1/pages/{page_id}",
         headers=NOTION_HEADERS,
-        json={"properties": {"Statut": {"select": {"name": "Publie"}}}},
+        json={"properties": {"Statut": {"select": {"name": status}}}},
         timeout=30,
     )
     response.raise_for_status()
-    print("  Notion updated -> Publie")
+    print(f"  Notion updated -> {status}")
+
+
+def mark_as_published(page_id):
+    set_notion_status(page_id, "Publie")
 
 
 def main():
@@ -394,7 +408,7 @@ def main():
 
     rows = query_kayla_ads(target_dates)
     print(f"Ready Kayla ad row(s): {len(rows)}")
-    print(f"Local Kayla output dir: {local_output_dir()}")
+    print("Manual-first Kayla workflow: legacy HyperFrames post-processing is disabled.")
 
     candidates = []
     for row in rows:
@@ -405,18 +419,15 @@ def main():
         if not slot_is_due(slot, publication_date, now):
             print(f"Skipping {title}: slot {slot} not due.")
             continue
-        local_video = local_kayla_video_path(row)
         video_url = get_text(props.get("Lien Video"))
-        if not local_video.exists() and not video_url:
-            print(f"Skipping {title}: no local MP4 and no Lien Video.")
+        if not video_url:
+            print(f"Skipping {title}: no manual Lien Video.")
             continue
-        candidates.append((slot_sort_value(publication_date, slot), row, local_video))
+        candidates.append((slot_sort_value(publication_date, slot), row))
 
     selected = None
-    selected_local_video = None
     if candidates:
-        _, selected, local_video = min(candidates, key=lambda item: item[0])
-        selected_local_video = local_video if local_video.exists() else None
+        _, selected = min(candidates, key=lambda item: item[0])
 
     if not selected:
         print("No due Kayla ad row with an available video found. Nothing to publish.")
@@ -435,10 +446,7 @@ def main():
     print(f"Selected Kayla ad: {notion_title}")
     print(f"Slot: {slot}")
     print(f"Platforms: {platforms}")
-    if selected_local_video:
-        print(f"Video source: local MP4 ({selected_local_video})")
-    elif video_url:
-        print("Video source: Notion Lien Video")
+    print("Video source: Notion Lien Video")
     if script:
         print("Metadata context source: Script")
     elif prompt:
@@ -450,14 +458,11 @@ def main():
         return 0
 
     metadata = generate_kayla_ad_metadata(context, platforms)
-    delete_video_after = False
-    if selected_local_video:
-        video_path = str(selected_local_video)
-    else:
-        video_path = download_video(video_url)
-        delete_video_after = True
+    video_path = download_video(video_url)
+    delete_video_after = True
     successes = 0
     failures = 0
+    outcomes = {}
 
     try:
         for platform in platforms:
@@ -476,7 +481,13 @@ def main():
                 print(f"  Required hashtags present: no - missing {missing_hashtags}")
             else:
                 print("  Required hashtags present: yes")
-            if upload_video(video_path, title, description, platform):
+            try:
+                result = upload_video(video_path, title, description, platform)
+            except Exception as exc:
+                result = {"success": False, "error_type": type(exc).__name__, "error": sanitize_error(exc)}
+            platform_success = upload_result_succeeded(result, platform_key(platform) or "")
+            outcomes[platform] = result_details(result, platform_key(platform) or "", platform_success)
+            if platform_success:
                 successes += 1
                 print(f"  {platform} success")
             else:
@@ -487,12 +498,29 @@ def main():
             os.remove(video_path)
 
     print(f"Kayla Ads result: successes={successes} failures={failures}")
-    required_successes = 1 if len(platforms) == 1 else MIN_SUCCESSFUL_PLATFORMS
-    print(f"Required successful platforms: {required_successes}")
-    if successes >= required_successes:
-        mark_as_published(page_id)
+    final_status, final_reason = final_status_for_successes(successes, len(platforms))
+    print(f"Final outcome: {final_status} ({final_reason})")
+    notion_status_error = None
+    if final_status in {"Publie", "Partiel", "Echec"}:
+        try:
+            set_notion_status(page_id, final_status)
+        except Exception as exc:
+            notion_status_error = f"{type(exc).__name__}: {sanitize_error(exc)}"
+            print(f"Notion status update failed: {notion_status_error}")
     else:
-        print("Not enough successful platforms. Keeping A publier.")
+        print("No terminal status computed. Notion was not updated.")
+
+    report_file = append_publication_report(
+        page_id=page_id,
+        avatar=KAYLA_PROFILE,
+        title=notion_title,
+        video_type="Visual Vocabulary",
+        requested_platforms=platforms,
+        outcomes=outcomes,
+        final_status=final_status,
+        notion_status_error=notion_status_error,
+    )
+    print(f"Publication report: {report_file}")
 
     return 0
 

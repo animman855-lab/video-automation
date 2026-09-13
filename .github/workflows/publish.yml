@@ -36,11 +36,16 @@ jobs:
           PUBLISH_SLOT_LOCK_FILE:   ${{ runner.temp }}/publish-slot-lock.json
         run: python publish_images.py
 
-      - name: Installer Tesseract OCR et espeak-ng
+      # LEGACY / DISABLED: all active profiles now use manually supplied videos.
+      - name: Installer les outils HyperFrames legacy
+        if: ${{ false }}
         continue-on-error: true
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr espeak-ng
 
-      - name: Generer HyperFrames TeacherRyan pilote
+      # LEGACY / DISABLED FOR CURRENT MANUAL-FIRST WORKFLOW.
+      # The implementation remains in hyperframes/ for historical reuse.
+      - name: Generer HyperFrames TeacherRyan pilote (legacy disabled)
+        if: ${{ false }}
         continue-on-error: true
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -69,4 +74,14 @@ jobs:
           GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
           HYPERFRAMES_OUTPUT_DIR: ${{ runner.temp }}/hyperframes-output
           PUBLISH_SLOT_LOCK_FILE: ${{ runner.temp }}/publish-slot-lock.json
+          PUBLISH_REPORT_PATH: ${{ runner.temp }}/publish-report.jsonl
         run: python publish.py
+
+      - name: Sauvegarder le rapport de publication par plateforme
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-platform-report
+          path: ${{ runner.temp }}/publish-report.jsonl
+          if-no-files-found: ignore
+          retention-days: 14

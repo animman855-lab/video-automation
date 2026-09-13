@@ -7,11 +7,14 @@ deterministic local result is used when no remote provider is available.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 from typing import Callable, Iterable
 
 import requests
+
+from profile_config import get_profile_config
 
 
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
@@ -186,26 +189,43 @@ def deterministic_metadata(
     hashtags: Iterable[str],
     youtube_hashtags: Iterable[str] = (),
     app_focused: bool = False,
+    source_title: str = "",
+    profile_config: dict | None = None,
 ) -> dict[str, str]:
     """Create valid, predictable metadata without any model/API."""
 
     topic = _topic_from_script(script)
-    avatar_name = avatar.strip().title() or "Saloo English"
+    config = dict(profile_config or get_profile_config(avatar))
+    if source_title.strip():
+        topic = re.sub(r"\s+", " ", source_title).strip()[:90] or topic
+    variant_seed = f"{avatar.lower()}|{source_title}|{script}".encode("utf-8")
+    variant_index = int(hashlib.sha256(variant_seed).hexdigest()[:8], 16) % 4
+    english_prefixes = [
+        "Practice English",
+        "Real English Practice",
+        "Useful English Today",
+        "Speak English Naturally",
+    ]
+    title_prefix = (
+        english_prefixes[variant_index]
+        if config.get("market") == "global_english"
+        else config.get("fallback_title_prefix") or english_prefixes[variant_index]
+    )
     tags = " ".join(dict.fromkeys(tag.strip() for tag in hashtags if tag.strip()))
     youtube_tags = " ".join(dict.fromkeys(tag.strip() for tag in youtube_hashtags if tag.strip()))
+    cta = config.get("cta", "Comment APP and I will send you the link.")
+    description_prefix = config.get("fallback_description_prefix") or "Practice useful English with Saloo English."
     if app_focused:
-        base_title = f"Practice English with Saloo English: {topic}"
+        base_title = f"{title_prefix} with Saloo English: {topic}"
         base_description = (
-            f"Practice useful English with Saloo English. {topic}. "
-            "Build speaking confidence with short, real-life practice.\n\n"
-            f"{tags}"
+            f"{description_prefix} {topic}. "
+            f"Build speaking confidence with short, real-life practice. {cta}\n\n{tags}"
         )
     else:
-        base_title = f"Practice English: {topic}"
+        base_title = f"{title_prefix}: {topic}"
         base_description = (
-            f"Practice useful English with {avatar_name}. {topic}. "
-            "Improve your speaking and listening through real-life English.\n\n"
-            f"{tags}"
+            f"{description_prefix} {topic}. "
+            f"Improve your speaking and listening through real-life English. {cta}\n\n{tags}"
         )
 
     result: dict[str, str] = {}

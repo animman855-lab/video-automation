@@ -49,6 +49,9 @@ from publish_timing import (
     slot_sort_value,
 )
 from script_parser import parse_vocabulary_cta, parse_vocabulary_items
+
+# LEGACY / DISABLED FOR THE CURRENT MANUAL-FIRST PRODUCTION WORKFLOW.
+# GitHub Actions no longer invokes this runner for active production rows.
 from tts_google import (
     _access_token,
     check_tts_secrets,
