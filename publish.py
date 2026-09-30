@@ -185,6 +185,32 @@ def get_youtube_hashtag(index):
     return YOUTUBE_HASHTAGS[index % len(YOUTUBE_HASHTAGS)]
 
 
+
+# Yahya's standing rule (2026-09-30): every published title opens with a fixed hook.
+# Instagram/Facebook -> Comment APP hook (feeds the AutoDM).
+# YouTube/TikTok/Pinterest -> profile-link hook.
+TITLE_PREFIXES = {
+    "INSTAGRAM": "Comment APP if you want to learn English",
+    "FACEBOOK": "Comment APP if you want to learn English",
+    "YOUTUBE": "Click the link in my profile and start practicing English today",
+    "TIKTOK": "CLICK THE LINK IN MY PROFILE AND START PRACTICING ENGLISH TODAY",
+    "PINTEREST": "Click the link in my profile and start practicing English today",
+}
+
+
+def enforce_title_prefixes(metadata):
+    """Guarantee the title-prefix rule even if the LLM ignores the prompt."""
+    for platform, prefix in TITLE_PREFIXES.items():
+        key = f"{platform}_TITLE"
+        title = (metadata.get(key) or "").strip()
+        if not title:
+            continue
+        if title.lower().startswith(prefix.lower()):
+            continue
+        metadata[key] = f"{prefix} - {title}"
+    return metadata
+
+
 def generate_metadata(script, avatar, plateformes, video_index=0, source_title=""):
     avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), f"#{avatar.lower()}")
     youtube_hashtag = get_youtube_hashtag(video_index)
@@ -214,13 +240,14 @@ STRICT RULES PER PLATFORM:
 
 === YOUTUBE ===
 TITLE rules:
-- Use a VARIED pattern based on script content:
+- ALWAYS begin the title with exactly this phrase: Click the link in my profile and start practicing English today
+- After the phrase, add a short hook based on the script (VARIED patterns):
   * Don't Say "[wrong word]" ❌ Say This Instead {youtube_hashtag}
   * Stop Using "[phrase]" ❌ Native Speakers Say This {youtube_hashtag}
   * Most People Say "[X]" Wrong ❌ Here's The Right Way {youtube_hashtag}
   * Learn These [Topic] Words ❌ You Didn't Know {youtube_hashtag}
 - Always end with: {youtube_hashtag}
-- Max 90 characters total
+- Max 90 characters total (the mandatory opening phrase counts toward the limit)
 
 DESCRIPTION rules:
 - Line 1: Repeat the title
@@ -235,6 +262,7 @@ DESCRIPTION rules:
 === TIKTOK ===
 TITLE rules:
 - ONE line in CAPS, punchy hook
+- ALWAYS begin the title with exactly: CLICK THE LINK IN MY PROFILE AND START PRACTICING ENGLISH TODAY
 - Do not add hashtags yourself; the publisher will append three short topic hashtags and one avatar hashtag.
 - Max 150 characters total
 
@@ -245,7 +273,8 @@ DESCRIPTION rules:
 
 === INSTAGRAM ===
 TITLE rules:
-- Intriguing question with 1-2 emojis based on script topic
+- ALWAYS begin the title with exactly: Comment APP if you want to learn English
+- Then an intriguing question with 1-2 emojis based on script topic
 
 DESCRIPTION rules:
 - Start with 👉 then ONE continuous engaging paragraph (2-4 sentences) about what viewers will learn
@@ -257,7 +286,8 @@ DESCRIPTION rules:
 
 === FACEBOOK ===
 TITLE rules:
-- Intriguing question with 1-2 emojis based on script topic
+- ALWAYS begin the title with exactly: Comment APP if you want to learn English
+- Then an intriguing question with 1-2 emojis based on script topic
 
 DESCRIPTION rules:
 - Start with 👉 then ONE continuous engaging paragraph (2-4 sentences) about what viewers will learn
@@ -269,7 +299,8 @@ DESCRIPTION rules:
 
 === PINTEREST ===
 TITLE rules:
-- SEO-optimized title with main keyword first
+- ALWAYS begin the title with exactly: Click the link in my profile and start practicing English today
+- Then an SEO-optimized hook with the main keyword first
 - How-to or number format when possible
 - Max 100 characters
 
@@ -315,7 +346,7 @@ NOTION TITLE CONTEXT:
         "#esl",
         *profile_config.get("localized_hashtags", []),
     ]
-    return request_metadata(
+    metadata = request_metadata(
         prompt,
         required_keys,
         lambda: deterministic_metadata(
@@ -329,6 +360,7 @@ NOTION TITLE CONTEXT:
         ),
         label="main publisher",
     )
+    return enforce_title_prefixes(metadata)
 
 
 def get_drive_file_id(drive_url):
