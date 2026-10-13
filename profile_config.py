@@ -45,31 +45,11 @@ PROFILE_CONFIG = {
     },
     "thefluentbuild": {
         **DEFAULT_PROFILE_CONFIG,
-        "market": "spanish",
-        "audience": "Spanish-speaking English learners",
-        "metadata_language": "neutral Spanish with English teaching examples",
-        "metadata_instruction": (
-            "Write primarily in neutral, broadly understandable Spanish. "
-            "Keep the English phrase being taught in English. Do not use Portuguese or country-specific slang."
-        ),
-        "cta": "Comenta APP y te envío el enlace.",
-        "fallback_title_prefix": "Inglés práctico",
-        "fallback_description_prefix": "Practica inglés útil con Saloo English.",
-        "localized_hashtags": ["#aprendeingles", "#inglesfacil"],
+        "audience": "global English learners",
     },
     "oliviaa": {
         **DEFAULT_PROFILE_CONFIG,
-        "market": "indonesian",
-        "audience": "Indonesian-speaking English learners",
-        "metadata_language": "natural modern Bahasa Indonesia with English teaching examples",
-        "metadata_instruction": (
-            "Write primarily in natural, broadly understandable Bahasa Indonesia. "
-            "Keep the English phrase being taught in English."
-        ),
-        "cta": "Komen APP dan aku akan kirim linknya.",
-        "fallback_title_prefix": "Latihan Bahasa Inggris",
-        "fallback_description_prefix": "Latih bahasa Inggris yang berguna bersama Saloo English.",
-        "localized_hashtags": ["#belajarbahasainggris", "#bahasainggris"],
+        "audience": "global English learners",
     },
 }
 

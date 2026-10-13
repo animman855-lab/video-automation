@@ -17,8 +17,6 @@ YOUTUBE_TITLE_HASHTAGS = ["#english", "#learnenglish", "#englishlearning"]
 TIKTOK_HASHTAGS_BY_AVATAR = {
     "cindy": ["#learnenglish", "#تعلم_الانجليزية", "#englishspeaking"],
     "teacherryan": ["#learnenglish", "#englishvocabulary", "#englishpractice"],
-    "thefluentbuild": ["#learnenglish", "#aprendeingles", "#englishgrammar"],
-    "oliviaa": ["#learnenglish", "#belajarbahasainggris", "#englishspeaking"],
 }
 
 
