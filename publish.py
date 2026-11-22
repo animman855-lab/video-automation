@@ -1,6 +1,10 @@
 import os
-import requests
 import re
+import shutil
+import subprocess
+import tempfile
+import wave
+import requests
 from datetime import datetime
 from pathlib import Path
 import pytz
@@ -211,7 +215,80 @@ def enforce_title_prefixes(metadata):
     return metadata
 
 
-def generate_metadata(script, avatar, plateformes, video_index=0, source_title=""):
+# Local Whisper transcription (free, no API key): the caption LLM works from
+# the Notion script AND from what is really said in the video. Any failure
+# here must never block a publication — transcribe_video() never raises.
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small").strip() or "small"
+WHISPER_MODEL_DIR = os.getenv("WHISPER_MODEL_DIR", "").strip()
+
+
+def _ffmpeg_exe():
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def _video_to_audio_array(video_path):
+    """Decode video audio to a 16kHz mono float32 numpy array without PyAV.
+
+    faster-whisper + PyAV 19 is broken (av.open rejects the metadata_errors
+    kwarg), so decode with ffmpeg to WAV and read it with the stdlib wave
+    module, then pass the array to model.transcribe() (never a file path).
+    """
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg not available for transcription")
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    wav_path = tmp.name
+    tmp.close()
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-v", "error", "-i", video_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path],
+            check=True,
+            timeout=120,
+        )
+        import numpy as np
+        with wave.open(wav_path, "rb") as wav_file:
+            frames = wav_file.readframes(wav_file.getnframes())
+        return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    finally:
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+
+def transcribe_video(video_path):
+    """Transcribe the actual video audio with local Whisper (free, no API key).
+
+    Returns the transcript text, or "" on ANY failure so the publisher falls
+    back to the Notion script alone. Never raises.
+    """
+    try:
+        from faster_whisper import WhisperModel
+
+        audio = _video_to_audio_array(video_path)
+        model_kwargs = {"device": "cpu", "compute_type": "int8"}
+        if WHISPER_MODEL_DIR:
+            model_kwargs["download_root"] = WHISPER_MODEL_DIR
+        model = WhisperModel(WHISPER_MODEL, **model_kwargs)
+        segments, info = model.transcribe(audio, beam_size=5)
+        text = " ".join(segment.text.strip() for segment in segments if segment.text and segment.text.strip())
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            print(f"  Transcription Whisper ({info.language}): {text[:200]}")
+        return text
+    except Exception as exc:
+        print(f"  Transcription unavailable ({type(exc).__name__}: {exc}); continuing with script only.")
+        return ""
+
+
+def generate_metadata(script, avatar, plateformes, video_index=0, source_title="", transcript=""):
     avatar_hashtag = AVATAR_HASHTAG.get(avatar.lower(), f"#{avatar.lower()}")
     youtube_hashtag = get_youtube_hashtag(video_index)
     context = AVATAR_CONTEXT.get(avatar.lower(), "an English teacher")
@@ -223,6 +300,8 @@ def generate_metadata(script, avatar, plateformes, video_index=0, source_title="
     prompt = f"""You are a social media expert creating content for {context}
 
 Based on the video script below, generate optimized content for these platforms: {platforms_str}
+
+Use the transcript of the actual video (when provided below) to target the captions to what is really said in the video — it takes precedence over the planned script when they differ.
 
 PROFILE LOCALIZATION:
 - Target market: {profile_config['market']}
@@ -327,6 +406,9 @@ PINTEREST_DESCRIPTION: [description here]
 
 SCRIPT:
 {script}
+
+TRANSCRIPT OF THE ACTUAL VIDEO (what is really said in the video; use it to target the captions to the real content — it takes precedence over the script when they differ; empty when transcription was unavailable):
+{transcript}
 
 NOTION TITLE CONTEXT:
 {source_title}"""
@@ -679,9 +761,6 @@ def main():
             print("  No script - skipping.")
             continue
 
-        print("  Generating platform-specific content...")
-        metadata = generate_metadata(script, avatar, plateformes, index, titre_notion)
-
         print("  Downloading video...")
         try:
             video_path = download_video(lien_video)
@@ -689,6 +768,12 @@ def main():
             print(f"  PUBLISH ISSUE: {exc.code} - {exc}. Notion remains A publier; continuing with next row.")
             continue
         delete_video_after = True
+
+        print("  Transcribing video (Whisper, local)...")
+        transcript = transcribe_video(video_path)
+
+        print("  Generating platform-specific content...")
+        metadata = generate_metadata(script, avatar, plateformes, index, titre_notion, transcript=transcript)
 
         successes, failures, outcomes = publish_video_to_platforms(
             video_path,
