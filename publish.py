@@ -248,7 +248,7 @@ def _video_to_audio_array(video_path):
     tmp.close()
     try:
         subprocess.run(
-            [ffmpeg, "-y", "-v", "error", "-i", video_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path],
+            [ffmpeg, "-y", "-v", "error", "-i", video_path, "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le", "-f", "wav", wav_path],
             check=True,
             timeout=120,
         )
