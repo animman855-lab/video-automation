@@ -1,6 +1,10 @@
 import argparse
 import os
 import re
+import shutil
+import subprocess
+import tempfile
+import wave
 from datetime import datetime
 from pathlib import Path
 
@@ -124,12 +128,97 @@ def local_kayla_video_path(row: dict) -> Path:
     return local_output_dir() / f"kayla-flow-final-{date}-{slot}-{page_id}.mp4"
 
 
-def generate_kayla_ad_metadata(script, platforms):
+# Local Whisper transcription (free, no API key): the caption LLM works from
+# what is really said in the video. Any failure here must never block a
+# publication — transcribe_video() never raises.
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small").strip() or "small"
+WHISPER_MODEL_DIR = os.getenv("WHISPER_MODEL_DIR", "").strip()
+
+
+def _ffmpeg_exe():
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def _video_to_audio_array(video_path):
+    """Decode video audio to a 16kHz mono float32 numpy array without PyAV.
+
+    faster-whisper + PyAV 19 is broken (av.open rejects the metadata_errors
+    kwarg), so decode with ffmpeg to WAV and read it with the stdlib wave
+    module, then pass the array to model.transcribe() (never a file path).
+    """
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg not available for transcription")
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    wav_path = tmp.name
+    tmp.close()
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-v", "error", "-i", video_path, "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le", "-f", "wav", wav_path],
+            check=True,
+            timeout=120,
+        )
+        import numpy as np
+        with wave.open(wav_path, "rb") as wav_file:
+            frames = wav_file.readframes(wav_file.getnframes())
+        return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    finally:
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+
+def transcribe_video(video_path):
+    """Transcribe the actual video audio with local Whisper (free, no API key).
+
+    Returns the transcript text, or "" on ANY failure so the publisher falls
+    back to the Notion context alone. Never raises.
+    """
+    try:
+        from faster_whisper import WhisperModel
+
+        audio = _video_to_audio_array(video_path)
+        model_kwargs = {"device": "cpu", "compute_type": "int8"}
+        if WHISPER_MODEL_DIR:
+            model_kwargs["download_root"] = WHISPER_MODEL_DIR
+        model = WhisperModel(WHISPER_MODEL, **model_kwargs)
+        segments, info = model.transcribe(audio, beam_size=5)
+        text = " ".join(segment.text.strip() for segment in segments if segment.text and segment.text.strip())
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            print(f"  Transcription Whisper ({info.language}): {text[:200]}")
+        return text
+    except Exception as exc:
+        print(f"  Transcription unavailable ({type(exc).__name__}: {exc}); continuing with Notion context only.")
+        return ""
+
+
+def generate_kayla_ad_metadata(script, platforms, transcript=""):
+    # Yahya 21/11: captions and titles must come from the transcript ONLY —
+    # never from the Notion script/prompt. The Notion context is kept only as
+    # a last-resort fallback when transcription produced nothing, so the video
+    # still gets usable metadata and publication is never blocked.
+    transcript_text = (transcript or "").strip()
+    if transcript_text:
+        content_source = transcript_text
+    else:
+        content_source = script
+        print("  WARNING: empty transcript — metadata falls back to Notion context for this video")
+
     platforms_str = ", ".join(platforms)
     prompt = f"""You are a performance social media copywriter for Saloo English, an English learning app.
 
 Create platform-specific titles and descriptions for a short UGC-style ad video.
 The public account is Kayla, but the goal is to promote Saloo English App.
+Base the copy ONLY on the transcript of the actual video below: use the exact words, phrases and topics actually spoken in the video. Do NOT use the planned Notion script — it is not provided.
 
 Core positioning:
 - Saloo English helps learners practice useful English every day.
@@ -140,7 +229,7 @@ Rules:
 - English only.
 - Keep the copy direct, natural, and conversion-focused.
 - Do not make fake claims about guaranteed results.
-- Do not mention discounts unless the script says so.
+- Do not mention discounts unless the transcript says so.
 - Always include these exact mandatory hashtags in every platform description:
   #learnenglish #englishapp #englishpractice #speakenglish #salooenglish
 
@@ -158,8 +247,8 @@ FACEBOOK_DESCRIPTION: [description]
 PINTEREST_TITLE: [title]
 PINTEREST_DESCRIPTION: [description]
 
-Video script/context:
-{script}"""
+Video transcript (what is really said in the video — the ONLY content source; use the exact words, phrases and topics spoken):
+{content_source}"""
 
     required_keys = [
         f"{platform.upper()}_{suffix}"
@@ -170,7 +259,7 @@ Video script/context:
         prompt,
         required_keys,
         lambda: deterministic_metadata(
-            script,
+            content_source,
             "kayla",
             platforms,
             REQUIRED_HASHTAGS,
@@ -457,8 +546,9 @@ def main():
         print("No platforms - skipping.")
         return 0
 
-    metadata = generate_kayla_ad_metadata(context, platforms)
     video_path = download_video(video_url)
+    transcript = transcribe_video(video_path)
+    metadata = generate_kayla_ad_metadata(context, platforms, transcript=transcript)
     delete_video_after = True
     successes = 0
     failures = 0
