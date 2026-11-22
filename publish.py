@@ -297,11 +297,22 @@ def generate_metadata(script, avatar, plateformes, video_index=0, source_title="
     localized_cta = profile_config["cta"]
     platforms_str = ", ".join(plateformes)
 
+    # Yahya 21/11: captions and titles must come from the transcript ONLY —
+    # never from the Notion script. The script is kept only as a last-resort
+    # fallback when transcription produced nothing, so the video still gets
+    # usable metadata and publication is never blocked.
+    transcript_text = (transcript or "").strip()
+    if transcript_text:
+        content_source = transcript_text
+    else:
+        content_source = script
+        print("  WARNING: empty transcript — metadata falls back to Notion script for this video")
+
     prompt = f"""You are a social media expert creating content for {context}
 
-Based on the video script below, generate optimized content for these platforms: {platforms_str}
+Based ONLY on the transcript of the actual video below, generate optimized content for these platforms: {platforms_str}
 
-Use the transcript of the actual video (when provided below) to target the captions to what is really said in the video — it takes precedence over the planned script when they differ.
+The transcript is the ONLY source for the content: use the exact words, phrases and topics actually spoken in the video. Do NOT use the planned Notion script — it is not provided.
 
 PROFILE LOCALIZATION:
 - Target market: {profile_config['market']}
@@ -320,7 +331,7 @@ STRICT RULES PER PLATFORM:
 === YOUTUBE ===
 TITLE rules:
 - ALWAYS begin the title with exactly this phrase: Click the link in my profile and start practicing English today
-- After the phrase, add a short hook based on the script (VARIED patterns):
+- After the phrase, add a short hook based on the transcript (VARIED patterns):
   * Don't Say "[wrong word]" ❌ Say This Instead {youtube_hashtag}
   * Stop Using "[phrase]" ❌ Native Speakers Say This {youtube_hashtag}
   * Most People Say "[X]" Wrong ❌ Here's The Right Way {youtube_hashtag}
@@ -353,7 +364,7 @@ DESCRIPTION rules:
 === INSTAGRAM ===
 TITLE rules:
 - ALWAYS begin the title with exactly: Comment APP if you want to learn English
-- Then an intriguing question with 1-2 emojis based on script topic
+- Then an intriguing question with 1-2 emojis based on transcript topic
 
 DESCRIPTION rules:
 - Start with 👉 then ONE continuous engaging paragraph (2-4 sentences) about what viewers will learn
@@ -366,7 +377,7 @@ DESCRIPTION rules:
 === FACEBOOK ===
 TITLE rules:
 - ALWAYS begin the title with exactly: Comment APP if you want to learn English
-- Then an intriguing question with 1-2 emojis based on script topic
+- Then an intriguing question with 1-2 emojis based on transcript topic
 
 DESCRIPTION rules:
 - Start with 👉 then ONE continuous engaging paragraph (2-4 sentences) about what viewers will learn
@@ -404,14 +415,8 @@ FACEBOOK_DESCRIPTION: [description here]
 PINTEREST_TITLE: [title here]
 PINTEREST_DESCRIPTION: [description here]
 
-SCRIPT:
-{script}
-
-TRANSCRIPT OF THE ACTUAL VIDEO (what is really said in the video; use it to target the captions to the real content — it takes precedence over the script when they differ; empty when transcription was unavailable):
-{transcript}
-
-NOTION TITLE CONTEXT:
-{source_title}"""
+TRANSCRIPT OF THE ACTUAL VIDEO (what is really said in the video — the ONLY content source; use the exact words, phrases and topics spoken):
+{content_source}"""
 
     required_keys = [
         f"{platform.upper()}_{suffix}"
@@ -432,12 +437,12 @@ NOTION TITLE CONTEXT:
         prompt,
         required_keys,
         lambda: deterministic_metadata(
-            script,
+            content_source,
             avatar,
             plateformes,
             fallback_hashtags,
             youtube_hashtags=[youtube_hashtag],
-            source_title=source_title,
+            source_title="",
             profile_config=profile_config,
         ),
         label="main publisher",
