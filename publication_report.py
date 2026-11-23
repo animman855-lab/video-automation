@@ -91,6 +91,7 @@ def append_publication_report(
     outcomes: dict[str, dict],
     final_status: str,
     notion_status_error: str | None = None,
+    metadata_provider: str | None = None,
 ) -> Path:
     path = report_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +109,8 @@ def append_publication_report(
     }
     if notion_status_error:
         payload["notion_status_error"] = sanitize_error(notion_status_error)
+    if metadata_provider:
+        payload["metadata_provider"] = metadata_provider
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
     return path

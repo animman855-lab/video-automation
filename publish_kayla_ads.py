@@ -11,7 +11,7 @@ from pathlib import Path
 import pytz
 import requests
 from hashtag_utils import title_with_hashtags
-from metadata_provider import deterministic_metadata, request_metadata
+from metadata_provider import deterministic_metadata, last_metadata_provider, request_metadata
 from publication_report import (
     append_publication_report,
     final_status_for_successes,
@@ -232,6 +232,7 @@ Rules:
 - Do not mention discounts unless the transcript says so.
 - Always include these exact mandatory hashtags in every platform description:
   #learnenglish #englishapp #englishpractice #speakenglish #salooenglish
+- Add up to 8 short topic-specific hashtags drawn from the transcript (tags that describe THIS video's topic — the activity, place, objects or phrases taught). Do not repeat generic tags.
 
 Generate only for these platforms: {platforms_str}
 
@@ -549,6 +550,7 @@ def main():
     video_path = download_video(video_url)
     transcript = transcribe_video(video_path)
     metadata = generate_kayla_ad_metadata(context, platforms, transcript=transcript)
+    metadata_provider = last_metadata_provider()
     delete_video_after = True
     successes = 0
     failures = 0
@@ -609,6 +611,7 @@ def main():
         outcomes=outcomes,
         final_status=final_status,
         notion_status_error=notion_status_error,
+        metadata_provider=metadata_provider,
     )
     print(f"Publication report: {report_file}")
 

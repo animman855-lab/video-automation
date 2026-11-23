@@ -19,6 +19,17 @@ from profile_config import get_profile_config
 
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+
+# Name of the provider that produced the most recent metadata
+# ("Groq", "Gemini" or "deterministic"). The publishers record it in the
+# publication report so a silent fallback to deterministic metadata is visible.
+LAST_METADATA_PROVIDER: str | None = None
+
+
+def last_metadata_provider() -> str | None:
+    """Name of the provider that produced the most recent metadata."""
+
+    return LAST_METADATA_PROVIDER
 METADATA_KEYS = (
     "YOUTUBE_TITLE",
     "YOUTUBE_DESCRIPTION",
@@ -159,16 +170,19 @@ def request_metadata(
 ) -> dict[str, str]:
     """Try Groq, then Gemini, then local deterministic metadata."""
 
+    global LAST_METADATA_PROVIDER
     required = list(required_keys)
     for provider, call in (("Groq", _call_groq), ("Gemini", _call_gemini)):
         try:
             result = parse_metadata_response(call(prompt), required)
             validate_metadata_contract(result, required)
+            LAST_METADATA_PROVIDER = provider
             print(f"  Metadata provider: {provider} ({label})")
             return result
         except Exception as exc:
             print(f"  Metadata provider {provider} unavailable: {type(exc).__name__}: {exc}")
 
+    LAST_METADATA_PROVIDER = "deterministic"
     print(f"  Metadata provider: deterministic local fallback ({label})")
     result = deterministic_fallback()
     validate_metadata_contract(result, required)

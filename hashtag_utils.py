@@ -44,7 +44,7 @@ def _extract_tags(text: str) -> list[str]:
 
 
 def tiktok_hashtags(avatar: str) -> list[str]:
-    """Return three short topic tags plus one avatar tag for TikTok."""
+    """Return the required TikTok tags plus one avatar tag."""
 
     key = re.sub(r"[^a-z0-9]+", "", (avatar or "").lower())
     topic_tags = TIKTOK_HASHTAGS_BY_AVATAR.get(
@@ -71,7 +71,7 @@ def ensure_description_hashtags(
     max_chars: int | None = None,
     required_tags: list[str] | None = None,
 ) -> str:
-    """Guarantee core/avatar tags while preserving a few relevant AI tags."""
+    """Guarantee core/avatar tags while preserving up to 8 relevant AI tags."""
 
     clean = re.sub(r"\s+", " ", (description or "").strip())
     existing = _extract_tags(clean)
@@ -81,7 +81,7 @@ def ensure_description_hashtags(
     tags = _unique_tags(required + existing)
     if max_chars is not None:
         extras = [tag for tag in tags if tag.lower() not in {item.lower() for item in required}]
-        tags = required + extras[:3]
+        tags = required + extras[:8]
 
     if max_chars is None:
         return f"{body}\n\n{' '.join(tags)}".strip()

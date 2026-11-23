@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 import pytz
 
-from metadata_provider import deterministic_metadata, request_metadata
+from metadata_provider import deterministic_metadata, last_metadata_provider, request_metadata
 from hashtag_utils import final_hashtags, prepare_video_metadata, validate_prepared_metadata
 from profile_config import get_profile_config
 from publication_report import (
@@ -346,19 +346,19 @@ DESCRIPTION rules:
 - "Perfect for beginners, ESL learners, and anyone improving their English."
 - "Watch, listen, and repeat to build strong vocabulary naturally."
 - SEO keywords as comma-separated list (15-20 keywords)
-- Hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english #englishlesson #esl #spokenenglish {avatar_hashtag} + up to 10 topic-specific hashtags
+- Hashtags: the 4 mandatory hashtags + {avatar_hashtag} + up to 10 topic-specific hashtags drawn from the transcript. Do NOT repeat generic tags like #englishlesson #esl #spokenenglish — only tags that describe THIS video's topic.
 - Max 5000 characters total
 
 === TIKTOK ===
 TITLE rules:
 - ONE line in CAPS, punchy hook
 - ALWAYS begin the title with exactly: CLICK THE LINK IN MY PROFILE AND START PRACTICING ENGLISH TODAY
-- Do not add hashtags yourself; the publisher will append three short topic hashtags and one avatar hashtag.
+- Do not add hashtags yourself; the publisher will append the required TikTok hashtags and one avatar hashtag.
 - Max 150 characters total
 
 DESCRIPTION rules:
 - Write one or two short sentences describing the video.
-- Do not add hashtags yourself; the publisher will append the required TikTok hashtags.
+- You may add up to 5 short topic-specific hashtags at the end (tags that describe THIS video's topic). The publisher always keeps the required TikTok hashtags.
 - Keep the description concise and natural.
 
 === INSTAGRAM ===
@@ -371,7 +371,7 @@ DESCRIPTION rules:
 - Skip one line
 - Engagement question on its own line (ex: "Which expression will you use first? 💬")
 - Skip one line
-- Hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english {avatar_hashtag} + topic-specific hashtags
+- Hashtags: the 4 mandatory hashtags + {avatar_hashtag} + up to 10 topic-specific hashtags drawn from the transcript. Do NOT repeat generic tags like #englishlesson #esl #spokenenglish — only tags that describe THIS video's topic.
 - Max 2200 characters total — NEVER exceed
 
 === FACEBOOK ===
@@ -384,7 +384,7 @@ DESCRIPTION rules:
 - Skip one line
 - Engagement question on its own line
 - Skip one line
-- Hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english {avatar_hashtag} + topic-specific hashtags
+- Hashtags: the 4 mandatory hashtags + {avatar_hashtag} + up to 10 topic-specific hashtags drawn from the transcript. Do NOT repeat generic tags like #englishlesson #esl #spokenenglish — only tags that describe THIS video's topic.
 - Keep under 500 characters for best engagement
 
 === PINTEREST ===
@@ -397,7 +397,7 @@ TITLE rules:
 DESCRIPTION rules:
 - Rich SEO description with keywords naturally included
 - End with: "Save this pin to learn later!"
-- Hashtags: #learnenglish #englishvocabulary #englishspeakingpractice #english {avatar_hashtag} + 3-5 topic hashtags
+- Hashtags: the 4 mandatory hashtags + {avatar_hashtag} + 3-5 topic-specific hashtags drawn from the transcript. Do NOT repeat generic tags like #englishlesson #esl #spokenenglish.
 - STRICT max 480 characters total including hashtags — NEVER exceed
 
 Use the profile localization rules above. English must remain visible for the English phrases being taught.
@@ -779,6 +779,7 @@ def main():
 
         print("  Generating platform-specific content...")
         metadata = generate_metadata(script, avatar, plateformes, index, titre_notion, transcript=transcript)
+        metadata_provider = last_metadata_provider()
 
         successes, failures, outcomes = publish_video_to_platforms(
             video_path,
@@ -813,6 +814,7 @@ def main():
             outcomes=outcomes,
             final_status=final_status,
             notion_status_error=notion_status_error,
+            metadata_provider=metadata_provider,
         )
         print(f"  Publication report: {report_file}")
 
