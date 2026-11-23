@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytz
 import requests
-from hashtag_utils import title_with_hashtags
+from hashtag_utils import normalize_brand_name, title_with_hashtags
 from metadata_provider import deterministic_metadata, last_metadata_provider, request_metadata
 from publication_report import (
     append_publication_report,
@@ -193,6 +193,7 @@ def transcribe_video(video_path):
         segments, info = model.transcribe(audio, beam_size=5)
         text = " ".join(segment.text.strip() for segment in segments if segment.text and segment.text.strip())
         text = re.sub(r"\s+", " ", text).strip()
+        text = normalize_brand_name(text)
         if text:
             print(f"  Transcription Whisper ({info.language}): {text[:200]}")
         return text

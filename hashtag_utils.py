@@ -20,6 +20,21 @@ TIKTOK_HASHTAGS_BY_AVATAR = {
 }
 
 
+_BRAND_MISHEARINGS = re.compile(r"\b[Ss]al(?:u|ou|my)\b")
+
+
+def normalize_brand_name(text: str) -> str:
+    """Fix Whisper mishearings of the brand name in a transcript.
+
+    Whisper regularly hears "Saloo" as "Salu" / "Salmy" / "Salou"; the
+    spoken word is Saloo, so the transcript fed to the caption LLM is
+    corrected before any metadata is generated. Word-boundary match only
+    -- none of these strings is an English word, so real transcript
+    words are untouched.
+    """
+    return _BRAND_MISHEARINGS.sub("Saloo", text or "")
+
+
 def _avatar_hashtag(avatar: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "", (avatar or "").lower())
     return f"#{value}" if value else "#english"
